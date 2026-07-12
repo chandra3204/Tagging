@@ -1,0 +1,57 @@
+# ===== Build Output =====
+target/
+*.class
+*.jar
+*.war
+
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ===== Maven =====
+.mvn/
+mvnw
+mvnw.cmd
+
+# ===== Database =====
+data/
+*.mv.db
+*.trace.db
+
+# ===== Uploaded Files =====
+uploads/
+
+# ===== Logs =====
+Logger/
+*.log
+
+# ===== Python Virtual Environment =====
+ocr_env/
+
+# ===== PaddleOCR Source (large) =====
+PaddleOCR-main/
+
+# ===== Tesseract Data =====
+tessdata/
+
+# ===== OS Files =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Gemini / AI =====
+.agents/
+.gemini/
+
+# ===== Old Project Copy =====
+Tagging/
+
+# ===== Misc =====
+dashboard_mockup.png

@@ -1,0 +1,734 @@
+
+
+
+1 st promopt
+
+Here's a **professional enterprise-level prompt** you can directly give to Copilot, Cursor, Claude, or ChatGPT.
+
+---
+
+# Feature Request: Enterprise File Management System for Smart UI Analysis
+
+## Objective
+
+Redesign the file upload and storage system of the Smart UI Analysis application to support **multiple file uploads**, **all common file formats**, and **permanent backend storage**.
+
+The system must ensure that **uploaded files are never permanently deleted from the backend**, even if the user deletes them from the frontend.
+
+---
+
+# 1. Multiple File Upload
+
+Allow users to upload:
+
+* Single file
+* Multiple files
+* Drag & Drop multiple files
+* Folder upload (optional)
+
+Supported formats:
+
+### Images
+
+* PNG
+* JPG
+* JPEG
+* GIF
+* BMP
+* TIFF
+* WEBP
+* SVG
+
+### Documents
+
+* PDF
+* DOC
+* DOCX
+* XLS
+* XLSX
+* PPT
+* PPTX
+* TXT
+* CSV
+* XML
+* JSON
+* RTF
+* ODT
+
+### Archives (Optional)
+
+* ZIP
+* RAR
+* 7Z
+
+The application must automatically detect the file type and validate supported formats.
+
+---
+
+# 2. Project-Based Backend Storage
+
+Every uploaded project must automatically create a dedicated folder on the backend.
+
+Example:
+
+```text
+/uploads/
+
+    Banking_Project/
+
+        Dashboard.png
+
+        Login_Page.png
+
+        Employee.pdf
+
+        Invoice.pdf
+
+        Requirements.docx
+
+        Report.xlsx
+
+        metadata.json
+
+    HRMS_Project/
+
+        Login.png
+
+        EmployeeList.pdf
+
+        Attendance.xlsx
+
+        OCR_Report.pdf
+```
+
+Folder name should be:
+
+```
+<Project_Name>
+```
+
+If the project name already exists:
+
+```
+<Project_Name>_1
+
+<Project_Name>_2
+
+<Project_Name>_3
+```
+
+or use
+
+```
+<ProjectID>_<ProjectName>
+```
+
+to avoid conflicts.
+
+---
+
+# 3. Backend File Storage
+
+Every uploaded file must be permanently stored on the backend.
+
+Never overwrite existing files.
+
+Store:
+
+* Original File Name
+* Stored File Name
+* Project Name
+* Upload Date
+* File Size
+* File Type
+* Uploaded By
+* File Path
+* File ID
+
+Example:
+
+```text
+Project Name:
+HRMS
+
+Original File:
+Dashboard.png
+
+Stored File:
+20260705153020_Dashboard.png
+
+Path:
+/uploads/HRMS/
+
+File Type:
+PNG
+```
+
+---
+
+# 4. Frontend Delete Behavior
+
+When the user clicks Delete in the UI:
+
+❌ Do NOT physically delete the file from the backend.
+
+Instead:
+
+* Remove it only from the project view.
+* Mark it as deleted in the database.
+
+Example:
+
+```text
+status = DELETED
+```
+
+or
+
+```text
+isDeleted = true
+```
+
+The actual file must remain inside the backend storage folder.
+
+This ensures data recovery and audit history.
+
+---
+
+# 5. Restore Deleted Files
+
+Provide an option:
+
+```
+Restore Deleted Files
+```
+
+The application should restore the file from backend storage without requiring another upload.
+
+---
+
+# 6. Permanent Backend Archive
+
+Even if:
+
+* User deletes the file
+* User deletes the project
+* User logs out
+
+The backend folder and original uploaded files must remain unchanged.
+
+Only database status should change.
+
+Example:
+
+```text
+Project Deleted
+
+↓
+
+Database
+
+status = ARCHIVED
+
+↓
+
+Files
+
+Remain inside
+
+/uploads/ProjectName/
+```
+
+---
+
+# 7. Download Storage
+
+Whenever any file is uploaded:
+
+Automatically save an exact copy inside the project folder.
+
+Example:
+
+```text
+/uploads/
+
+HRMS/
+
+    Login.png
+
+    Dashboard.png
+
+    Employee.pdf
+
+    Requirement.docx
+```
+
+These files become the permanent master copies.
+
+---
+
+# 8. Project Metadata
+
+Create a metadata file inside every project folder.
+
+Example:
+
+```text
+/uploads/
+
+HRMS/
+
+    metadata.json
+```
+
+Contents:
+
+```json
+{
+  "projectId": "PRJ-0001",
+  "projectName": "HRMS",
+  "manager": "manager@app.com",
+  "createdDate": "2026-07-05",
+  "totalFiles": 12,
+  "deletedFiles": 2,
+  "activeFiles": 10
+}
+```
+
+---
+
+# 9. OCR Storage
+
+Whenever OCR is completed:
+
+Save:
+
+```
+uploads/
+
+HRMS/
+
+OCR/
+
+Login_Page.json
+
+Dashboard.json
+
+Employee_Page_1.json
+```
+
+Example:
+
+```json
+{
+    "file":"Dashboard.png",
+    "page":1,
+    "ocrText":"Dashboard\nEmployee Details\nLogout",
+    "confidence":98.7
+}
+```
+
+---
+
+# 10. Generated Reports
+
+Every generated report should also be saved permanently.
+
+Example:
+
+```text
+uploads/
+
+HRMS/
+
+Reports/
+
+Analysis_Report.pdf
+
+OCR_Report.pdf
+
+Summary_Report.pdf
+```
+
+Even if the user downloads or deletes the report from the UI, the backend copy must remain.
+
+---
+
+# 11. Database Design
+
+Create tables:
+
+### Projects
+
+* Project ID
+* Project Name
+* Manager
+* Folder Path
+* Created Date
+* Status
+
+### Files
+
+* File ID
+* Project ID
+* Original File Name
+* Stored File Name
+* File Type
+* File Size
+* Upload Date
+* File Path
+* isDeleted
+* OCR Status
+
+### Reports
+
+* Report ID
+* Project ID
+* Report Name
+* Report Path
+* Generated Date
+
+---
+
+# 12. Security
+
+Only authenticated managers can:
+
+* Upload files
+* Download files
+* Generate reports
+* View project files
+
+Backend storage must not be publicly accessible.
+
+All file access should go through secured REST APIs.
+
+---
+
+# 13. Performance
+
+* Upload multiple files simultaneously.
+* Store files asynchronously.
+* Prevent duplicate uploads using checksum/hash validation.
+* Support files up to **100 MB** each.
+* Support **1,000+ files** per project.
+* Generate thumbnails for images.
+* Render PDFs using **PDF.js**.
+* Keep original files untouched.
+
+---
+
+# 14. Audit Log
+
+Maintain an audit log for every action.
+
+Example:
+
+```text
+2026-07-05 10:30 AM
+
+Manager uploaded Dashboard.png
+
+2026-07-05 10:35 AM
+
+Manager generated OCR Report
+
+2026-07-05 10:40 AM
+
+Manager deleted Dashboard.png from UI
+
+Backend File Status:
+
+Available
+
+Database Status:
+
+Deleted
+
+Physical File:
+
+Still Exists
+```
+
+---
+
+# Final Requirements
+
+* Support all common image and document formats.
+* Allow multiple file uploads in one project.
+* Automatically create a backend folder using the project name.
+* Save every uploaded file permanently in that project folder.
+* Save OCR outputs, reports, and metadata inside the same project folder.
+* **Deleting a file or project from the frontend must never physically delete the backend files.** Only update the database status (`isDeleted` or `ARCHIVED`).
+* Design the solution using **Spring Boot + MySQL** with a scalable, secure, and production-ready architecture that follows enterprise best practices.
+=================================================================================================
+
+
+
+
+Prompt 2
+I checked your latest report. The OCR is still **not working correctly**. The reported OCR accuracy (94.2%) does **not** match the actual extracted text. For example, the report extracts fragments like **"tre : Directorate"** and **"p"**, even though the selected regions contain much more readable text. 
+
+The likely problems are:
+
+* The PDF is being rendered at too low a resolution before OCR.
+* OCR is reading only part of the selected region.
+* The crop coordinates are not aligned with the high-resolution rendered page.
+* The image is not being preprocessed before OCR.
+* OCR is making only one attempt instead of retrying with different preprocessing.
+
+Use this prompt with your AI:
+
+---
+
+# Fix OCR Accuracy for PDF and Image Analysis
+
+## Current Problem
+
+The OCR implementation is producing incorrect results.
+
+Examples:
+
+Expected:
+
+```
+Pondicherry University
+DDE-ADMISSION-2025
+MASTER OF BUSINESS ADMINISTRATION
+Head Quarter/Regional Centre : Directorate of Distance Education
+```
+
+Actual:
+
+```
+tre : Directorate
+```
+
+or
+
+```
+p
+```
+
+Although the selected region clearly contains readable text.
+
+The OCR accuracy shown in the report is misleading.
+
+Do not calculate OCR accuracy unless it is based on the OCR engine's confidence score.
+
+---
+
+# Completely Redesign the OCR Pipeline
+
+Use this workflow:
+
+```
+Upload File
+
+↓
+
+If PDF
+
+↓
+
+Render using PDF.js at 300 DPI (Scale 3.0)
+
+↓
+
+Convert PDF Page to High Resolution Canvas
+
+↓
+
+User Draws Selection
+
+↓
+
+Crop Selected Region
+
+↓
+
+Image Preprocessing
+
+↓
+
+OCR
+
+↓
+
+Confidence Validation
+
+↓
+
+Return Text
+```
+
+Never perform OCR on a low-resolution PDF preview.
+
+---
+
+# Image Preprocessing (Mandatory)
+
+Before OCR:
+
+* Crop the selected region
+* Convert to grayscale
+* Resize image to 3×
+* Set resolution to 300 DPI
+* Adaptive threshold
+* Contrast enhancement
+* Sharpen image
+* Remove noise
+* Auto deskew
+* Normalize brightness
+
+Use the processed image as OCR input.
+
+---
+
+# OCR Configuration
+
+Use Tesseract with:
+
+```
+Language : eng
+
+OEM : 3
+
+PSM : 6
+```
+
+If OCR confidence is below 80%:
+
+Automatically retry using:
+
+```
+PSM 4
+
+PSM 11
+
+PSM 12
+```
+
+Select the result with the highest confidence.
+
+---
+
+# Crop Validation
+
+Before OCR:
+
+Display the cropped image in debug mode.
+
+The cropped image must exactly match the user's selection.
+
+If the crop is incorrect:
+
+Do not execute OCR.
+
+Fix the crop first.
+
+---
+
+# PDF Rendering
+
+Do NOT render PDFs at browser preview resolution.
+
+Render using:
+
+```
+Scale : 3.0
+
+or
+
+300 DPI
+```
+
+Maintain original quality.
+
+---
+
+# OCR Confidence
+
+Return:
+
+```json
+{
+"text":"...",
+"confidence":98.5
+}
+```
+
+Never hardcode OCR Accuracy.
+
+Calculate OCR Accuracy from the OCR engine's confidence values.
+
+---
+
+# Expected Output
+
+For the selected region:
+
+```
+Head Quarter/Regional Centre : Directorate of Distance Education
+```
+
+The OCR should return exactly:
+
+```
+Head Quarter/Regional Centre : Directorate of Distance Education
+```
+
+Not:
+
+```
+tre : Directorate
+```
+
+---
+
+# Debug Mode
+
+Save these images:
+
+```
+original.png
+
+cropped.png
+
+grayscale.png
+
+threshold.png
+
+final_ocr_input.png
+```
+
+Display them in a debug panel.
+
+This will help identify whether the problem is:
+
+* Incorrect crop
+* Low-resolution rendering
+* Image preprocessing
+* OCR configuration
+
+---
+
+# Acceptance Criteria
+
+✅ PDF rendered at high resolution.
+
+✅ OCR runs only on the selected region.
+
+✅ Cropped image matches the user's selection exactly.
+
+✅ OCR extracts complete sentences.
+
+✅ OCR confidence reflects actual recognition quality.
+
+✅ No truncated words or partial text.
+
+---
+
+### One more recommendation
+
+If you're building this with **Spring Boot**, use **Apache PDFBox** to render PDF pages at **300 DPI** on the backend, then run **Tess4J** on those high-resolution images. This approach is generally much more accurate than running OCR directly on the browser-rendered PDF canvas.

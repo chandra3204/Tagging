@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - Smart UI Analysis</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-container" style="width: 36px; height: 36px; border-radius: 8px; margin-bottom: 0; font-size: 18px; box-shadow: none;">
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+      </div>
+      <h2 style="font-family: var(--font-title); font-size: 20px; font-weight: 700;">Smart UI Analysis</h2>
+    </div>
+    <div class="header-right">
+      <span id="manager-badge" style="font-size: 13px; color: var(--text-secondary); background: var(--bg-tertiary); padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);">
+        <i class="fa-solid fa-user-tie" style="margin-right: 6px;"></i><span id="manager-email">manager@app.com</span>
+      </span>
+      <button class="theme-toggle" id="theme-toggle" title="Toggle Light/Dark Theme">
+        <i class="fa-solid fa-moon"></i>
+      </button>
+      <button class="btn btn-secondary" id="logout-btn" style="padding: 8px 16px;">
+        <i class="fa-solid fa-right-from-bracket"></i> Sign Out
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid Area -->
+  <main class="dashboard-container">
+    <div class="dashboard-header">
+      <div>
+        <h1 style="font-size: 28px; margin-bottom: 6px;">Application Analysis Dashboard</h1>
+        <p style="color: var(--text-secondary); font-size: 14px;">Manage UI design layouts, screenshots, and annotation tasks.</p>
+      </div>
+      <button class="btn btn-primary glow-btn" id="new-project-btn">
+        <i class="fa-solid fa-circle-plus"></i> New Project
+      </button>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="glass empty-state" style="display: none;">
+      <i class="fa-regular fa-folder-open"></i>
+      <h3 style="margin-bottom: 8px; font-size: 18px; color: var(--text-primary);">No Projects Found</h3>
+      <p style="margin-bottom: 24px; font-size: 14px;">Get started by uploading your first application screenshot or PDF document.</p>
+      <button class="btn btn-primary" onclick="openModal()">
+        Create First Project
+      </button>
+    </div>
+
+    <!-- Project List Grid -->
+    <div class="projects-grid" id="projects-grid">
+      <!-- Dynamic Project Cards Inserted Here -->
+    </div>
+  </main>
+
+  <!-- New Project Modal -->
+  <div class="modal-overlay" id="new-project-modal">
+    <div class="glass modal-content">
+      <div class="modal-header">
+        <h3 style="font-size: 20px; font-weight: 700;">Create New Project</h3>
+        <button class="modal-close" id="modal-close-btn">&times;</button>
+      </div>
+      <form id="create-project-form">
+        <div class="form-group">
+          <label class="form-label" for="project-name">Project Name</label>
+          <input class="form-input" type="text" id="project-name" placeholder="e.g. Mobile Signup Screen" required>
+        </div>
+        <div class="form-group" style="margin-bottom: 28px;">
+          <label class="form-label" for="project-file">Upload File</label>
+          <input class="form-input" type="file" id="project-file" accept=".png,.jpg,.jpeg,.pdf,.docx" multiple required style="padding: 8px 12px;">
+          <p style="font-size: 11px; color: var(--text-muted); margin-top: 6px;">
+            Supports PNG, JPG, JPEG, PDF, and DOCX files. Select multiple files to upload together.
+          </p>
+        </div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+          <button type="button" class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="submit-btn-spinner">
+            <span>Create & Analyze</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="js/app.js"></script>
+  <script>
+    // Security: Check login state
+    const sessionToken = localStorage.getItem('session_token');
+    const managerEmail = localStorage.getItem('manager_email');
+
+    if (!sessionToken) {
+      window.location.href = 'index.html';
+    }
+
+    if (managerEmail) {
+      document.getElementById('manager-email').textContent = managerEmail;
+    }
+
+    // Theme handling
+    const themeToggle = document.getElementById('theme-toggle');
+    const currentTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    updateThemeIcon(currentTheme);
+
+    themeToggle.addEventListener('click', () => {
+      const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('theme', theme);
+      updateThemeIcon(theme);
+    });
+
+    function updateThemeIcon(theme) {
+      const icon = themeToggle.querySelector('i');
+      if (theme === 'dark') {
+        icon.className = 'fa-solid fa-sun';
+      } else {
+        icon.className = 'fa-solid fa-moon';
+      }
+    }
+
+    // Logout
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      localStorage.removeItem('session_token');
+      localStorage.removeItem('manager_email');
+      window.location.href = 'index.html';
+    });
+
+    // Modal Control
+    const modal = document.getElementById('new-project-modal');
+    const newProjectBtn = document.getElementById('new-project-btn');
+    const closeBtn = document.getElementById('modal-close-btn');
+    const cancelBtn = document.getElementById('modal-cancel-btn');
+
+    newProjectBtn.addEventListener('click', openModal);
+    closeBtn.addEventListener('click', closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+
+    function openModal() {
+      modal.style.display = 'flex';
+      document.getElementById('project-name').focus();
+    }
+
+    function closeModal() {
+      modal.style.display = 'none';
+      document.getElementById('create-project-form').reset();
+    }
+
+    // Load Projects
+    async function loadProjects() {
+      const grid = document.getElementById('projects-grid');
+      const emptyState = document.getElementById('empty-state');
+      grid.innerHTML = '';
+
+      try {
+        const response = await fetch('/api/projects');
+        if (!response.ok) throw new Error('Failed to load projects');
+        
+        const projects = await response.json();
+        
+        if (projects.length === 0) {
+          grid.style.display = 'none';
+          emptyState.style.display = 'block';
+        } else {
+          grid.style.display = 'grid';
+          emptyState.style.display = 'none';
+
+          for (const project of projects) {
+            const card = document.createElement('div');
+            card.className = 'glass project-card';
+            
+            // Format dates
+            const date = new Date(project.uploadDate);
+            const dateString = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+
+            // Fetch file stats for this project
+            let filesCount = 0;
+            let fileTypes = [];
+            try {
+              const filesRes = await fetch(`/api/projects/${project.id}/files`);
+              if (filesRes.ok) {
+                const files = await filesRes.json();
+                filesCount = files.length;
+                fileTypes = [...new Set(files.map(f => f.fileType))];
+              }
+            } catch (e) {
+              console.error(e);
+            }
+
+            const badgesHtml = fileTypes.map(t => {
+              const badgeColor = t === 'PDF' ? 'var(--primary)' : 'var(--success)';
+              return `<span class="badge" style="background-color: ${badgeColor}; color: white;">${t}</span>`;
+            }).join(' ');
+
+            card.innerHTML = `
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                  <h3 class="project-title text-truncate" title="${escapeHtml(project.name)}">${escapeHtml(project.name)}</h3>
+                  <div style="display: flex; gap: 4px;">
+                    ${badgesHtml}
+                  </div>
+                </div>
+                <div class="project-meta">
+                  <span><i class="fa-regular fa-calendar" style="margin-right: 6px; width: 14px;"></i>Uploaded: ${dateString}</span>
+                  <span><i class="fa-regular fa-file" style="margin-right: 6px; width: 14px;"></i>Files: ${filesCount}</span>
+                </div>
+              </div>
+              <div class="project-actions">
+                <button class="btn btn-secondary btn-danger" onclick="deleteProject('${project.id}', event)" style="padding: 6px 12px; font-size: 12px;">
+                  <i class="fa-regular fa-trash-can"></i> Delete
+                </button>
+                <button class="btn btn-primary" onclick="openProject('${project.id}')" style="padding: 6px 16px; font-size: 13px;">
+                  Open Project <i class="fa-solid fa-arrow-up-right-from-square" style="font-size: 10px;"></i>
+                </button>
+              </div>
+            `;
+            grid.appendChild(card);
+          }
+        }
+      } catch (err) {
+        console.error('Projects fetch error:', err);
+        showToast('Error fetching project list', 'error');
+      }
+    }
+
+    // Open Project Workspace
+    function openProject(id) {
+      window.location.href = `analysis.html?id=${id}`;
+    }
+
+    // Delete Project API Call
+    async function deleteProject(id, event) {
+      event.stopPropagation();
+      if (!confirm('Are you sure you want to delete this project and all its UI tagging data? This action is irreversible.')) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/projects/${id}`, {
+          method: 'DELETE'
+        });
+
+        if (response.ok) {
+          showToast('Project deleted successfully', 'success');
+          loadProjects();
+        } else {
+          showToast('Failed to delete project', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('Error contacting server', 'error');
+      }
+    }
+
+    // Create Project multipart upload form submit
+    document.getElementById('create-project-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const submitBtn = document.getElementById('submit-btn-spinner');
+      const originalBtnText = submitBtn.innerHTML;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing...';
+
+      const name = document.getElementById('project-name').value;
+      const fileInput = document.getElementById('project-file');
+      
+      const formData = new FormData();
+      formData.append('name', name);
+      for (let i = 0; i < fileInput.files.length; i++) {
+        formData.append('file', fileInput.files[i]);
+      }
+      formData.append('managerEmail', localStorage.getItem('manager_email') || 'manager@app.com');
+
+      try {
+        const response = await fetch('/api/projects', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          showToast('Project Analyzed Successfully', 'success');
+          closeModal();
+          loadProjects();
+        } else {
+          showToast(data.error || 'Failed to create project', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('Server connection failed.', 'error');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnText;
+      }
+    });
+
+    // Helper functions
+    function showToast(message, type) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      
+      const icon = type === 'success' 
+        ? '<i class="fa-solid fa-circle-check"></i>' 
+        : '<i class="fa-solid fa-triangle-exclamation"></i>';
+        
+      toast.innerHTML = `${icon} <span>${message}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        toast.style.transition = 'all 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    function escapeHtml(text) {
+      const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+      };
+      return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
+    // Load initial project list
+    loadProjects();
+  </script>
+</body>
+</html>

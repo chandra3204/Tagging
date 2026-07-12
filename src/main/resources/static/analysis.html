@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analysis Workspace - Smart UI Analysis</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'" style="padding: 6px 12px; font-size: 13px;">
+        <i class="fa-solid fa-chevron-left"></i> Dashboard
+      </button>
+      <div style="height: 20px; width: 1px; background: var(--border);"></div>
+      <h2 id="workspace-project-title" style="font-family: var(--font-title); font-size: 18px; font-weight: 700; max-width: 250px;" class="text-truncate">
+        Project Workspace
+      </h2>
+    </div>
+    <div class="header-right">
+      <span style="font-size: 13px; color: var(--text-secondary); background: var(--bg-tertiary); padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);">
+        <i class="fa-solid fa-user-tie" style="margin-right: 6px;"></i><span id="manager-email">manager@app.com</span>
+      </span>
+      <button class="btn btn-primary glow-btn" id="pdf-report-btn" style="padding: 8px 16px; font-size: 13px;">
+        <i class="fa-solid fa-file-pdf"></i> Generate PDF Report
+      </button>
+    </div>
+  </header>
+
+  <!-- Workspace Shell -->
+  <div class="analysis-layout">
+    
+    <!-- Left Sidebar: Attributes -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <h3 class="sidebar-title">Create Attribute</h3>
+        <form id="attribute-form">
+          <div class="form-group">
+            <label class="form-label" for="attr-name">Attribute Name</label>
+            <input class="form-input" type="text" id="attr-name" placeholder="e.g. Attribute A" required>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 20px;">
+            <label class="form-label" for="attr-color">Color Selector</label>
+            <select class="form-input" id="attr-color" required>
+              <option value="Red">Red</option>
+              <option value="Blue">Blue</option>
+              <option value="Green">Green</option>
+              <option value="Yellow">Yellow</option>
+              <option value="Magenta">Magenta</option>
+              <option value="Cyan">Cyan</option>
+              <option value="Orange">Orange</option>
+              <option value="Indigo">Indigo</option>
+            </select>
+          </div>
+          
+          <button type="submit" class="btn btn-primary" style="width: 100%; font-size: 13px;">
+            <i class="fa-solid fa-plus"></i> Create Attribute
+          </button>
+        </form>
+      </div>
+
+      <div class="sidebar-section" style="max-height: 300px; display: flex; flex-direction: column;">
+        <h3 class="sidebar-title">Project Files</h3>
+        <div id="project-files-list" style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1;">
+          <!-- Dynamically filled with project files -->
+        </div>
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border);">
+          <input type="file" id="add-file-input" accept=".png,.jpg,.jpeg,.pdf,.docx" multiple style="display: none;">
+          <button class="btn btn-secondary" onclick="document.getElementById('add-file-input').click()" style="width: 100%; font-size: 12px; padding: 6px;">
+            <i class="fa-solid fa-cloud-arrow-up"></i> Add Files
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar-section" style="flex: 1; border-bottom: none;">
+        <h3 class="sidebar-title">Active Attributes</h3>
+        <div id="attributes-list" style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Dynamically filled with attributes -->
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center Workspace: File Viewer -->
+    <section class="center-workspace">
+      <div class="workspace-toolbar">
+        <div style="font-size: 12px; color: var(--text-secondary);" id="workspace-help-text">
+          <i class="fa-solid fa-mouse-pointer" style="margin-right: 6px;"></i> Select an active attribute, then click and drag to draw a selection rectangle. OCR will run on the selected area.
+        </div>
+        
+        <!-- Multi-page controls -->
+        <div class="page-controls" id="page-controls" style="display: none;">
+          <button class="btn btn-secondary" id="prev-page-btn" style="padding: 4px 10px; font-size: 12px;">
+            <i class="fa-solid fa-angle-left"></i>
+          </button>
+          <span style="font-size: 13px; font-weight: 500;" id="page-indicator">Page 1 of 1</span>
+          <button class="btn btn-secondary" id="next-page-btn" style="padding: 4px 10px; font-size: 12px;">
+            <i class="fa-solid fa-angle-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- File Visual Canvas Viewer -->
+      <div class="canvas-container">
+        <div class="canvas-wrapper" id="canvas-wrapper">
+          <canvas id="annotation-canvas"></canvas>
+          <!-- Hover boundaries will be drawn dynamically in canvas coordinate logic -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Sidebar: Detections Table & Summary -->
+    <aside class="sidebar sidebar-right">
+      <div class="sidebar-section" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0;">
+        <h3 class="sidebar-title">Detections Table</h3>
+        
+        <div class="detection-table-container">
+          <table class="det-table">
+            <thead>
+              <tr>
+                <th>Attribute</th>
+                <th>Color</th>
+                <th style="width: 50px; text-align: center;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="detections-tbody">
+              <!-- Dynamically populated with rows -->
+            </tbody>
+          </table>
+          
+          <div id="detections-empty-state" class="empty-state" style="padding: 24px 0;">
+            <i class="fa-solid fa-crop-simple" style="font-size: 32px; color: var(--text-muted);"></i>
+            <p style="font-size: 12px; margin-top: 10px;">No elements tagged yet</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Summary Panel -->
+      <div class="sidebar-section" style="background-color: rgba(15, 23, 42, 0.4); border-top: 1px solid var(--border);">
+        <h3 class="sidebar-title" style="margin-bottom: 12px;">Attribute Summary</h3>
+        <div id="summary-items-container" style="max-height: 150px; overflow-y: auto;">
+          <!-- Items A -> 5 Elements etc. -->
+        </div>
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); display: flex; justify-content: space-between; font-weight: 700; font-size: 14px;">
+          <span>Total Elements</span>
+          <span id="grand-total-count">0</span>
+        </div>
+      </div>
+
+      <!-- OCR Preprocessing Debug Panel -->
+      <div class="sidebar-section" style="background-color: rgba(15, 23, 42, 0.4); border-top: 1px solid var(--border);">
+        <h3 class="sidebar-title" style="margin-bottom: 12px;"><i class="fa-solid fa-bug" style="margin-right: 6px;"></i> OCR Preprocessing Debug</h3>
+        <div id="debug-images-container" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px;">
+          <div style="font-size: 10px; text-align: center; color: var(--text-secondary);">
+            <img id="debug-crop" style="width: 100%; border: 1px solid var(--border); background: #ffffff; aspect-ratio: 16/9; object-fit: contain;" src="uploads/debug/cropped.png" alt="Crop" onerror="this.src='https://placehold.co/100x50/1e293b/94a3b8?text=No+Crop'">
+            <div style="margin-top: 4px; font-family: monospace;">cropped.png</div>
+          </div>
+          <div style="font-size: 10px; text-align: center; color: var(--text-secondary);">
+            <img id="debug-gray" style="width: 100%; border: 1px solid var(--border); background: #ffffff; aspect-ratio: 16/9; object-fit: contain;" src="uploads/debug/grayscale.png" alt="Grayscale" onerror="this.src='https://placehold.co/100x50/1e293b/94a3b8?text=No+Grayscale'">
+            <div style="margin-top: 4px; font-family: monospace;">grayscale.png</div>
+          </div>
+          <div style="font-size: 10px; text-align: center; color: var(--text-secondary);">
+            <img id="debug-thresh" style="width: 100%; border: 1px solid var(--border); background: #ffffff; aspect-ratio: 16/9; object-fit: contain;" src="uploads/debug/threshold.png" alt="Threshold" onerror="this.src='https://placehold.co/100x50/1e293b/94a3b8?text=No+Threshold'">
+            <div style="margin-top: 4px; font-family: monospace;">threshold.png</div>
+          </div>
+          <div style="font-size: 10px; text-align: center; color: var(--text-secondary);">
+            <img id="debug-final" style="width: 100%; border: 1px solid var(--border); background: #ffffff; aspect-ratio: 16/9; object-fit: contain;" src="uploads/debug/final_ocr_input.png" alt="Final" onerror="this.src='https://placehold.co/100x50/1e293b/94a3b8?text=No+Final'">
+            <div style="margin-top: 4px; font-family: monospace;">final_ocr_input.png</div>
+          </div>
+        </div>
+        <div style="text-align: center; margin-top: 10px;">
+          <a id="debug-orig-link" href="uploads/debug/original.png" target="_blank" style="font-size: 11px; color: var(--primary); text-decoration: none; font-weight: 500;">
+            <i class="fa-solid fa-arrow-up-right-from-square" style="margin-right: 4px;"></i> View original.png (Full Page)
+          </a>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

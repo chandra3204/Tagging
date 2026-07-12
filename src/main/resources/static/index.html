@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Smart UI Analysis</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+  
+  <div class="auth-container">
+    <div class="glass auth-card">
+      <div class="logo-container">
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+      </div>
+      <h1 class="logo-text">Smart UI Analysis</h1>
+      <p style="color: var(--text-secondary); margin-bottom: 32px; font-size: 14px;">
+        Automatic UI Element Classification Platform
+      </p>
+
+      <form id="login-form">
+        <div class="form-group">
+          <label class="form-label" for="email">Manager Email</label>
+          <input class="form-input" type="email" id="email" placeholder="manager@app.com" required autocomplete="username">
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 30px;">
+          <label class="form-label" for="password">Password</label>
+          <input class="form-input" type="password" id="password" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+
+        <button type="submit" class="btn btn-primary glow-btn" style="width: 100%;">
+          Sign In <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </form>
+
+      <div style="margin-top: 24px; font-size: 12px; color: var(--text-muted);">
+        <p>Default credentials:</p>
+        <p style="font-family: monospace; margin-top: 4px;">manager@app.com / manager123</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="js/app.js"></script>
+  <script>
+    // Simple auth check: if already logged in, go to dashboard
+    if (localStorage.getItem('session_token')) {
+      window.location.href = 'dashboard.html';
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, password })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          showToast('Welcome Back', 'success');
+          
+          // Save session credentials
+          localStorage.setItem('session_token', data.token);
+          localStorage.setItem('manager_email', data.email);
+
+          setTimeout(() => {
+            window.location.href = 'dashboard.html';
+          }, 1000);
+        } else {
+          showToast(data.error || 'Authentication failed', 'error');
+        }
+      } catch (err) {
+        console.error('Error during login:', err);
+        showToast('Server connection failed.', 'error');
+      }
+    });
+
+    // Simple toast notification helper
+    function showToast(message, type) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      
+      const icon = type === 'success' 
+        ? '<i class="fa-solid fa-circle-check"></i>' 
+        : '<i class="fa-solid fa-triangle-exclamation"></i>';
+        
+      toast.innerHTML = `${icon} <span>${message}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        toast.style.transition = 'all 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+  </script>
+</body>
+</html>
