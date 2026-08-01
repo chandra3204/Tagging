@@ -1,15 +1,22 @@
-name: Java Spring Boot CI & OCR Pipeline Build
+name: Build & Deploy Live Application
 
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 jobs:
-  build:
-    name: Build & Verify Spring Boot Maven Project
+  build-and-deploy:
+    name: Build & Deploy Live Web URL
     runs-on: ubuntu-latest
 
     steps:
@@ -23,5 +30,23 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    - name: Build with Maven
-      run: mvn -B clean compile --file pom.xml
+    - name: Build Maven Application
+      run: mvn -B clean package -DskipTests
+
+    - name: Setup GitHub Pages
+      uses: actions/configure-pages@v4
+
+    - name: Upload Web Artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: 'src/main/resources/static'
+
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
+
+    - name: Output Live Deployment URL Summary
+      run: |
+        echo "### 🚀 Live Application Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "Your web application is live at:" >> $GITHUB_STEP_SUMMARY
+        echo "🔗 **Live Deployment URL**: [${{ steps.deployment.outputs.page_url }}](${{ steps.deployment.outputs.page_url }})" >> $GITHUB_STEP_SUMMARY
