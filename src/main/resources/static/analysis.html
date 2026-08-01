@@ -112,11 +112,10 @@
         </div>
       </div>
 
-      <!-- File Visual Canvas Viewer -->
-      <div class="canvas-container">
-        <div class="canvas-wrapper" id="canvas-wrapper">
-          <canvas id="annotation-canvas"></canvas>
-          <!-- Hover boundaries will be drawn dynamically in canvas coordinate logic -->
+      <!-- File Visual Canvas Viewer (Multi-page continuous scroll viewport) -->
+      <div class="canvas-container" id="canvas-container">
+        <div class="pages-scroll-wrapper" id="pages-scroll-wrapper">
+          <canvas id="annotation-canvas" style="display: none;"></canvas>
         </div>
       </div>
     </section>

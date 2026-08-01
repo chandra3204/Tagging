@@ -205,9 +205,15 @@ async function initWorkspace(projectId) {
 }
 
 // Load Image/Document onto Canvas
+let activeDrawingPage = 1;
+let pageObserver = null;
+
+// Load Image/Document onto Multi-Page Continuous Scroll Viewport
 async function loadWorkspaceImage() {
-  detectedBoxes = []; // Clear any mock boxes
-  let imageUrl = '';
+  detectedBoxes = [];
+  const container = document.getElementById('pages-scroll-wrapper');
+  if (!container) return;
+  container.innerHTML = '';
 
   if (currentFile && currentFile.fileType === 'PDF') {
     resetPdfViewerState();
@@ -218,33 +224,352 @@ async function loadWorkspaceImage() {
     return;
   }
 
-  if (currentFile.fileType === 'PDF') {
-    await loadPdfPageUsingPdfJs();
-    return;
-  } else if (currentFile.fileType === 'DOCX') {
-    // DOCX files will render a beautiful UI sandbox mockup
-    drawDocxSandbox();
-    return;
-  } else {
-    // PNG, JPG, JPEG
-    imageUrl = `/${currentFile.filePath}`;
+  totalPages = currentFile.pageCount || 1;
+  const isPdf = currentFile.fileType === 'PDF';
+
+  // If PDF, fetch PDF document info in background to ensure accurate total page count
+  if (isPdf) {
+    loadPdfDocument().catch(() => {});
   }
 
-  imageElement = new Image();
-  imageElement.src = imageUrl;
+  // Create Page Cards for every page in the document (Page 1 -> Page N)
+  for (let p = 1; p <= totalPages; p++) {
+    const card = document.createElement('div');
+    card.className = `pdf-page-card ${p === currentPage ? 'active-page-card' : ''}`;
+    card.id = `pdf-page-card-${p}`;
+    card.dataset.page = p;
 
-  imageElement.onload = () => {
-    // Set canvas size to match layout viewport (scaled logic)
-    const maxWidth = 800;
-    const scale = Math.min(1.0, maxWidth / imageElement.width);
-    canvas.width = imageElement.width * scale;
-    canvas.height = imageElement.height * scale;
-    canvas.style.width = '100%';
-    canvas.style.height = 'auto';
+    card.innerHTML = `
+      <div class="pdf-page-header">
+        <span><i class="fa-regular ${isPdf ? 'fa-file-pdf' : 'fa-file-image'}"></i> Page ${p} of ${totalPages}</span>
+        <span class="badge" id="page-tags-badge-${p}" style="background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-secondary); font-size: 11px;">0 Tags</span>
+      </div>
+      <div class="pdf-page-canvas-wrapper">
+        <canvas class="pdf-page-canvas" id="canvas-page-${p}" data-page="${p}"></canvas>
+      </div>
+    `;
+    container.appendChild(card);
 
-    // Draw initial view
-    redrawCanvas();
+    const c = document.getElementById(`canvas-page-${p}`);
+    if (c) {
+      c.width = 800;
+      c.height = 1000;
+      attachSelectionServiceToCanvas(c, p);
+    }
+  }
+
+  // Setup IntersectionObserver for lazy-loading pages on scroll
+  setupPageIntersectionObserver();
+
+  // Render current page image immediately
+  await loadPageImageAndDraw(currentPage);
+
+  // Update page indicators in toolbar
+  const pageControls = document.getElementById('page-controls');
+  if (pageControls) {
+    pageControls.style.display = isPdf ? 'flex' : 'none';
+    updatePageIndicator();
+  }
+}
+
+function setupPageIntersectionObserver() {
+  if (pageObserver) {
+    pageObserver.disconnect();
+  }
+
+  const scrollContainer = document.getElementById('canvas-container');
+  const options = {
+    root: scrollContainer,
+    rootMargin: '400px 0px',
+    threshold: 0.1
   };
+
+  pageObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const pageNum = parseInt(entry.target.dataset.page, 10);
+        if (pageNum) {
+          loadPageImageAndDraw(pageNum);
+          if (Math.abs(currentPage - pageNum) > 0) {
+            currentPage = pageNum;
+            updatePageIndicator();
+            updatePageCardSelection(pageNum);
+          }
+        }
+      }
+    });
+  }, options);
+
+  document.querySelectorAll('.pdf-page-card').forEach(card => {
+    pageObserver.observe(card);
+  });
+}
+
+function updatePageCardSelection(pageNum) {
+  document.querySelectorAll('.pdf-page-card').forEach(card => {
+    if (parseInt(card.dataset.page, 10) === pageNum) {
+      card.classList.add('active-page-card');
+    } else {
+      card.classList.remove('active-page-card');
+    }
+  });
+}
+
+async function loadPageImageAndDraw(pageNum) {
+  const c = document.getElementById(`canvas-page-${pageNum}`);
+  if (!c) return;
+
+  if (!currentFile) return;
+
+  if (currentFile.fileType === 'PDF') {
+    try {
+      const pageImage = await renderPdfPage(pageNum);
+      if (pageImage) {
+        c.width = pageImage.naturalWidth || pageImage.width || 800;
+        c.height = pageImage.naturalHeight || pageImage.height || 1000;
+        redrawPageCanvas(pageNum);
+      }
+    } catch (err) {
+      console.error(`Error loading PDF page ${pageNum}:`, err);
+    }
+  } else if (currentFile.fileType === 'DOCX') {
+    drawDocxSandboxOnCanvas(c);
+  } else {
+    // PNG, JPG, JPEG, TIFF, BMP
+    const img = new Image();
+    img.src = `/${currentFile.filePath}`;
+    img.onload = () => {
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      imageElement = img;
+      redrawPageCanvas(1);
+    };
+  }
+}
+
+function redrawAllPageCanvases() {
+  for (let p = 1; p <= totalPages; p++) {
+    redrawPageCanvas(p);
+  }
+}
+
+function redrawPageCanvas(pageNum) {
+  const pageCanvas = document.getElementById(`canvas-page-${pageNum}`);
+  if (!pageCanvas) return;
+  const pageCtx = pageCanvas.getContext('2d');
+
+  pageCtx.clearRect(0, 0, pageCanvas.width, pageCanvas.height);
+
+  // 1. Draw Page Image
+  const pageImg = pdfPageCache.get(pageNum) || (pageNum === 1 ? imageElement : null);
+  if (pageImg && pageImg.complete && pageImg.naturalWidth > 0) {
+    pageCtx.drawImage(pageImg, 0, 0, pageCanvas.width, pageCanvas.height);
+  } else {
+    pageCtx.fillStyle = '#ffffff';
+    pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+  }
+
+  // 2. Draw Saved Detections for Page pageNum
+  const pageDetections = pageAnnotationsCache.get(pageNum) || detections.filter(d => d.pageNumber === pageNum);
+  
+  // Update badge count in card header
+  const badgeEl = document.getElementById(`page-tags-badge-${pageNum}`);
+  if (badgeEl) {
+    badgeEl.textContent = `${pageDetections.length} Tag${pageDetections.length === 1 ? '' : 's'}`;
+  }
+
+  pageDetections.forEach(det => {
+    const box = det.boundingBox;
+    if (box) {
+      let scaleX = (box.canvasWidth && box.canvasWidth > 0) ? (pageCanvas.width / box.canvasWidth) : 1;
+      let scaleY = (box.canvasHeight && box.canvasHeight > 0) ? (pageCanvas.height / box.canvasHeight) : 1;
+
+      let drawX = box.x * scaleX;
+      let drawY = box.y * scaleY;
+      let drawW = box.width * scaleX;
+      let drawH = box.height * scaleY;
+
+      if (drawW < 0) { drawX += drawW; drawW = -drawW; }
+      if (drawH < 0) { drawY += drawH; drawH = -drawH; }
+
+      pageCtx.strokeStyle = det.color;
+      pageCtx.lineWidth = 2.5;
+      pageCtx.setLineDash([]);
+      pageCtx.strokeRect(drawX, drawY, drawW, drawH);
+
+      pageCtx.fillStyle = det.color + '18';
+      pageCtx.fillRect(drawX, drawY, drawW, drawH);
+
+      // Label background box
+      pageCtx.fillStyle = det.color;
+      pageCtx.font = 'bold 11px Inter';
+      const labelText = det.attribute;
+      const textWidth = pageCtx.measureText(labelText).width;
+      pageCtx.fillRect(drawX, drawY, textWidth + 8, 18);
+
+      pageCtx.fillStyle = '#ffffff';
+      pageCtx.fillText(labelText, drawX + 4, drawY + 13);
+    }
+  });
+
+  // 3. Draw Active User Drag Selection Box
+  if (isDrawing && activeDrawingPage === pageNum && selectionRect && selectionRect.width !== undefined) {
+    const activeColor = getSelectedAttributeColorHex();
+    let drawX = startX;
+    let drawY = startY;
+    let drawW = selectionRect.width;
+    let drawH = selectionRect.height;
+    if (drawW < 0) { drawX += drawW; drawW = -drawW; }
+    if (drawH < 0) { drawY += drawH; drawH = -drawH; }
+
+    pageCtx.strokeStyle = activeColor;
+    pageCtx.lineWidth = 2;
+    pageCtx.setLineDash([6, 4]);
+    pageCtx.fillStyle = getColorWithAlpha(activeColor, 0.2);
+    pageCtx.fillRect(drawX, drawY, drawW, drawH);
+    pageCtx.strokeRect(drawX, drawY, drawW, drawH);
+    drawSelectionHandles(pageCtx, drawX, drawY, drawW, drawH, activeColor);
+    pageCtx.setLineDash([]);
+  }
+}
+
+function attachSelectionServiceToCanvas(targetCanvas, pageNum) {
+  targetCanvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !currentFile) return;
+    if (!selectedAttribute) {
+      showToast('Select an attribute from the left sidebar before tagging elements.', 'error');
+      return;
+    }
+
+    currentPage = pageNum;
+    activeDrawingPage = pageNum;
+    updatePageCardSelection(pageNum);
+
+    const rect = targetCanvas.getBoundingClientRect();
+    const scaleX = targetCanvas.width / rect.width;
+    const scaleY = targetCanvas.height / rect.height;
+
+    startX = (e.clientX - rect.left) * scaleX;
+    startY = (e.clientY - rect.top) * scaleY;
+    isDrawing = true;
+
+    selectionRect = {
+      x: startX,
+      y: startY,
+      width: 0,
+      height: 0,
+      currentX: startX,
+      currentY: startY
+    };
+  });
+
+  targetCanvas.addEventListener('mousemove', (e) => {
+    if (!isDrawing || activeDrawingPage !== pageNum) return;
+
+    const rect = targetCanvas.getBoundingClientRect();
+    const scaleX = targetCanvas.width / rect.width;
+    const scaleY = targetCanvas.height / rect.height;
+
+    const currentX = (e.clientX - rect.left) * scaleX;
+    const currentY = (e.clientY - rect.top) * scaleY;
+
+    selectionRect.currentX = currentX;
+    selectionRect.currentY = currentY;
+    selectionRect.width = currentX - startX;
+    selectionRect.height = currentY - startY;
+
+    requestAnimationFrame(() => redrawPageCanvas(pageNum));
+  });
+
+  targetCanvas.addEventListener('mouseleave', () => {
+    if (isDrawing && activeDrawingPage === pageNum) {
+      isDrawing = false;
+      redrawPageCanvas(pageNum);
+    }
+  });
+
+  targetCanvas.addEventListener('mouseup', async (e) => {
+    if (!isDrawing || activeDrawingPage !== pageNum || !selectedAttribute || !currentFile) {
+      isDrawing = false;
+      return;
+    }
+    isDrawing = false;
+
+    const dragWidth = selectionRect.width;
+    const dragHeight = selectionRect.height;
+    if (Math.abs(dragWidth) < 5 || Math.abs(dragHeight) < 5) {
+      redrawPageCanvas(pageNum);
+      return;
+    }
+
+    showToast(`Reading text on Page ${pageNum}...`, 'success');
+
+    let normX = startX;
+    let normY = startY;
+    let normW = dragWidth;
+    let normH = dragHeight;
+    if (normW < 0) { normX += normW; normW = -normW; }
+    if (normH < 0) { normY += normH; normH = -normH; }
+
+    let base64Image = '';
+    const pageImg = pdfPageCache.get(pageNum) || (pageNum === 1 ? imageElement : null);
+    if (pageImg && pageImg.complete) {
+      try {
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = normW;
+        cropCanvas.height = normH;
+        const cropCtx = cropCanvas.getContext('2d');
+        cropCtx.drawImage(
+          pageImg,
+          normX, normY, normW, normH,
+          0, 0, normW, normH
+        );
+        base64Image = cropCanvas.toDataURL('image/png');
+      } catch (err) {
+        console.error("Failed to crop selection: ", err);
+      }
+    }
+
+    const colorHex = getSelectedAttributeColorHex();
+    const payload = {
+      attribute: selectedAttribute.name,
+      color: colorHex,
+      elementType: 'Custom Block',
+      pageNumber: pageNum,
+      base64Image: base64Image,
+      fileId: currentFile.id,
+      boundingBox: {
+        x: Math.round(normX),
+        y: Math.round(normY),
+        width: Math.round(normW),
+        height: Math.round(normH),
+        canvasWidth: targetCanvas.width,
+        canvasHeight: targetCanvas.height
+      }
+    };
+
+    try {
+      const response = await fetch(`/api/projects/${currentProject.id}/detections/ocr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        const savedData = await response.json();
+        const confStr = typeof savedData.confidence === 'number' ? savedData.confidence.toFixed(1) : '0.0';
+        showToast(`✓ OCR Success (Page ${pageNum}). Confidence: ${confStr}%`, 'success');
+        await refreshDetections();
+        await loadPageAnnotations(pageNum);
+        redrawPageCanvas(pageNum);
+      } else {
+        showToast('Failed to save tag', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Network error saving tag', 'error');
+    }
+  });
 }
 
 async function loadPdfDocument() {
@@ -264,11 +589,8 @@ async function loadPdfDocument() {
       if (doc.numPages > totalPages) {
         totalPages = doc.numPages;
         if (currentFile) currentFile.pageCount = doc.numPages;
-      }
-      const pageControls = document.getElementById('page-controls');
-      if (pageControls) {
-        pageControls.style.display = totalPages >= 1 ? 'flex' : 'none';
-        updatePageIndicator();
+        // Re-render layout with all discovered pages
+        loadWorkspaceImage();
       }
     }
     return doc;
@@ -283,7 +605,6 @@ async function renderPdfPage(pageNumber) {
     return cachedPage;
   }
 
-  // 1. Try PDF.js rendering in browser
   try {
     const doc = await loadPdfDocument();
     if (doc) {
@@ -309,19 +630,12 @@ async function renderPdfPage(pageNumber) {
       });
 
       pdfPageCache.set(pageNumber, img);
-      if (pdfPageCache.size > 8) {
-        const oldestKey = pdfPageCache.keys().next().value;
-        if (typeof oldestKey !== 'undefined') {
-          pdfPageCache.delete(oldestKey);
-        }
-      }
       return img;
     }
   } catch (err) {
     console.warn("Client PDF.js render error on page " + pageNumber + ", falling back to backend lazy render: ", err);
   }
 
-  // 2. Server-side Lazy Render Fallback Endpoint
   const backendUrl = `/api/projects/${currentProject.id}/files/${currentFile.id}/pages/${pageNumber}/render`;
   const img = new Image();
   img.src = backendUrl;
@@ -334,120 +648,38 @@ async function renderPdfPage(pageNumber) {
   return img;
 }
 
-async function loadPdfPageUsingPdfJs() {
-  if (!currentFile || currentFile.fileType !== 'PDF') return;
-
-  const helpText = document.getElementById('workspace-help-text');
-  if (helpText) {
-    helpText.innerHTML = `<i class="fa-solid fa-spinner fa-spin" style="margin-right: 6px;"></i> Loading page ${currentPage} of ${totalPages}...`;
-  }
-
-  try {
-    const pageImage = await renderPdfPage(currentPage);
-    if (!pageImage) throw new Error('Unable to render PDF page');
-
-    imageElement = pageImage;
-    canvas.width = pageImage.naturalWidth || pageImage.width;
-    canvas.height = pageImage.naturalHeight || pageImage.height;
-    canvas.style.width = '100%';
-    canvas.style.height = 'auto';
-    canvas.style.backgroundColor = '#FFFFFF';
-
-    redrawCanvas();
-    applySelectionCursor();
-
-    if (helpText) {
-      helpText.innerHTML = `<i class="fa-solid fa-mouse-pointer" style="margin-right: 6px;"></i> Select an active attribute, then click and drag to draw a selection rectangle. OCR will run on the selected area.`;
-    }
-
-    if (currentPage < totalPages) {
-      renderPdfPage(currentPage + 1).catch(() => {});
-    }
-  } catch (err) {
-    console.error('PDF page render error: ', err);
-    showToast('Failed to render PDF page.', 'error');
-    drawFallbackCanvas();
-    if (helpText) {
-      helpText.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="margin-right: 6px; color: var(--danger);"></i> Unable to render PDF.`;
-    }
-  }
-}
-
-// Draw empty workspace
 function drawEmptyWorkspace() {
-  canvas.width = 700;
-  canvas.height = 500;
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '16px Inter';
-  ctx.textAlign = 'center';
-  ctx.fillText("No active files inside this project.", canvas.width / 2, canvas.height / 2 - 20);
-  ctx.fillText("Click 'Add Files' on the left sidebar to upload files.", canvas.width / 2, canvas.height / 2 + 10);
-  ctx.textAlign = 'left';
+  const container = document.getElementById('pages-scroll-wrapper');
+  if (container) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 60px 20px; color: var(--text-secondary);">
+        <i class="fa-solid fa-folder-open" style="font-size: 40px; margin-bottom: 12px; opacity: 0.5;"></i>
+        <p style="font-size: 14px; font-weight: 500;">No active files inside this project.</p>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Click 'Add Files' on the left sidebar to upload files.</p>
+      </div>
+    `;
+  }
 }
 
-// Draw a beautiful fallback preview
-function drawFallbackCanvas() {
-  canvas.width = 700;
-  canvas.height = 500;
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+function drawDocxSandboxOnCanvas(canvasEl) {
+  const cCtx = canvasEl.getContext('2d');
+  canvasEl.width = 800;
+  canvasEl.height = 600;
 
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '16px Inter';
-  ctx.textAlign = 'center';
-  ctx.fillText("Failed to load project layout preview.", canvas.width / 2, canvas.height / 2 - 20);
-  ctx.fillText("You can still click anywhere inside this box to create manual mock tags.", canvas.width / 2, canvas.height / 2 + 10);
-  ctx.textAlign = 'left';
-}
+  cCtx.fillStyle = '#0f172a';
+  cCtx.fillRect(0, 0, canvasEl.width, canvasEl.height);
 
-// Render simulated HTML workspace for DOCX files
-function drawDocxSandbox() {
-  canvas.width = 800;
-  canvas.height = 600;
-
-  // Outer frame
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Simulated Word Page
   const padding = 40;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(padding, padding, canvas.width - padding * 2, canvas.height - padding * 2);
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(padding, padding, canvas.width - padding * 2, canvas.height - padding * 2);
+  cCtx.fillStyle = '#ffffff';
+  cCtx.fillRect(padding, padding, canvasEl.width - padding * 2, canvasEl.height - padding * 2);
+  cCtx.strokeStyle = '#cbd5e1';
+  cCtx.lineWidth = 1;
+  cCtx.strokeRect(padding, padding, canvasEl.width - padding * 2, canvasEl.height - padding * 2);
 
-  // Document title
-  ctx.fillStyle = '#1e293b';
-  ctx.font = 'bold 24px Outfit';
-  ctx.fillText("Document Layout Analysis System", 80, 100);
-
-  // Divider
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillRect(80, 120, 640, 2);
-
-  // Paragraph blocks
-  ctx.fillStyle = '#64748b';
-  ctx.font = '14px Inter';
-  ctx.fillText("This workspace represents the document structure converted to web layout blocks.", 80, 150);
-  ctx.fillText("Please hover over the interactive buttons, tables, and inputs below to auto-tag boundaries.", 80, 170);
-
-  // Draw simulated buttons and inputs (with coordinates cached in detectedBoxes)
-  drawSimulatedComponent("Button", "Submit Button", 100, 220, 160, 40, '#6366f1');
-  drawSimulatedComponent("Input Field", "Enter name...", 290, 220, 220, 40, '#f1f5f9', '#94a3b8');
-  drawSimulatedComponent("Dropdown", "Select role...", 540, 220, 160, 40, '#f1f5f9', '#94a3b8');
-
-  // Simulated Table
-  ctx.fillStyle = '#f8fafc';
-  ctx.fillRect(100, 310, 600, 180);
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.strokeRect(100, 310, 600, 180);
-  ctx.fillStyle = '#1e293b';
-  ctx.font = 'bold 12px Inter';
-  ctx.fillText("Header 1", 120, 335);
+  cCtx.fillStyle = '#1e293b';
+  cCtx.font = 'bold 24px Outfit';
+  cCtx.fillText("Document Layout Analysis System", 80, 100);
+}
   ctx.fillText("Header 2", 320, 335);
   ctx.fillText("Header 3", 520, 335);
 
@@ -1197,19 +1429,21 @@ function refreshDebugImages() {
 function renderDetectionsTable() {
   const tbody = document.getElementById('detections-tbody');
   const empty = document.getElementById('detections-empty-state');
+  if (!tbody) return;
   tbody.innerHTML = '';
 
-  const pageDetections = (pageAnnotationsCache.get(currentPage) || detections.filter(d => d.pageNumber === currentPage));
+  const allDetections = detections || [];
 
-  if (pageDetections.length === 0) {
-    empty.style.display = 'block';
+  if (allDetections.length === 0) {
+    if (empty) empty.style.display = 'block';
     return;
   }
 
-  empty.style.display = 'none';
+  if (empty) empty.style.display = 'none';
 
-  pageDetections.forEach(det => {
+  allDetections.forEach(det => {
     const row = document.createElement('tr');
+    row.style.cursor = 'pointer';
     const confVal = typeof det.confidence === 'number' ? det.confidence.toFixed(1) : '0.0';
     const box = det.boundingBox || { x: 0, y: 0, width: 0, height: 0 };
     const bboxText = `x:${box.x}, y:${box.y}, w:${box.width}, h:${box.height}`;
@@ -1223,7 +1457,7 @@ function renderDetectionsTable() {
         </div>
         <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px; font-family: monospace; white-space: pre-wrap; word-break: break-all; max-height: 80px; overflow-y: auto; background: rgba(15, 23, 42, 0.5); padding: 4px 6px; border-radius: 4px;">${escapeHtml(textStr)}</div>
         <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px; display: flex; justify-content: space-between;">
-          <span>Pg ${det.pageNumber || 1}</span>
+          <span class="badge" style="background: var(--bg-tertiary); border: 1px solid var(--border);">Pg ${det.pageNumber || 1}</span>
           <span style="font-family: monospace;">${bboxText}</span>
         </div>
       </td>
@@ -1234,22 +1468,30 @@ function renderDetectionsTable() {
         </div>
       </td>
       <td style="text-align: center;">
-        <button class="btn btn-secondary" onclick="deleteDetection('${det.id}')" style="padding: 4px 8px; background: none; border: none; color: var(--danger);" title="Delete Tag">
+        <button class="btn btn-secondary" onclick="deleteDetection('${det.id}', event)" style="padding: 4px 8px; background: none; border: none; color: var(--danger);" title="Delete Tag">
           <i class="fa-regular fa-trash-can"></i>
         </button>
       </td>
     `;
+
+    row.onclick = (e) => {
+      if (e.target.closest('button')) return;
+      changePageTo(det.pageNumber || 1);
+    };
+
     tbody.appendChild(row);
   });
 }
 
-async function deleteDetection(id) {
+async function deleteDetection(id, event) {
+  if (event) event.stopPropagation();
   try {
     const res = await fetch(`/api/detections/${id}`, {
       method: 'DELETE'
     });
     if (res.ok) {
       await refreshDetections();
+      redrawAllPageCanvases();
       showToast('Tag deleted successfully');
     } else {
       showToast('Failed to delete tag', 'error');
@@ -1343,6 +1585,10 @@ function setupForms() {
   }
 }
 
+function redrawCanvas() {
+  redrawAllPageCanvases();
+}
+
 // Multi-page PDF paging logic
 function changePage(direction) {
   changePageTo(currentPage + direction);
@@ -1352,8 +1598,13 @@ function changePageTo(targetPage) {
   if (targetPage < 1 || targetPage > totalPages) return;
   currentPage = targetPage;
   updatePageIndicator();
-  loadPageAnnotations(currentPage);
-  loadWorkspaceImage();
+  updatePageCardSelection(targetPage);
+  loadPageAnnotations(targetPage);
+
+  const card = document.getElementById(`pdf-page-card-${targetPage}`);
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 function updatePageIndicator() {
