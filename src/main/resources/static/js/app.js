@@ -512,22 +512,19 @@ function attachSelectionServiceToCanvas(targetCanvas, pageNum) {
     if (normH < 0) { normY += normH; normH = -normH; }
 
     let base64Image = '';
-    const pageImg = pdfPageCache.get(pageNum) || (pageNum === 1 ? imageElement : null);
-    if (pageImg && pageImg.complete) {
-      try {
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = normW;
-        cropCanvas.height = normH;
-        const cropCtx = cropCanvas.getContext('2d');
-        cropCtx.drawImage(
-          pageImg,
-          normX, normY, normW, normH,
-          0, 0, normW, normH
-        );
-        base64Image = cropCanvas.toDataURL('image/png');
-      } catch (err) {
-        console.error("Failed to crop selection: ", err);
-      }
+    try {
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = Math.max(1, Math.round(normW));
+      cropCanvas.height = Math.max(1, Math.round(normH));
+      const cropCtx = cropCanvas.getContext('2d');
+      cropCtx.drawImage(
+        targetCanvas,
+        normX, normY, normW, normH,
+        0, 0, cropCanvas.width, cropCanvas.height
+      );
+      base64Image = cropCanvas.toDataURL('image/png');
+    } catch (err) {
+      console.error("Failed to crop selection from canvas: ", err);
     }
 
     const colorHex = getSelectedAttributeColorHex();

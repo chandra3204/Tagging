@@ -12,8 +12,12 @@ import com.smartui.analysis.model.Detection;
 import com.smartui.analysis.repository.ProjectFileRepository;
 import org.springframework.stereotype.Service;
 
+import java.awt.AlphaComposite;
+import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.FontMetrics;
 import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -41,13 +45,19 @@ public class PDFReportService {
 
     private static final Map<String, String> HEX_TO_COLOR_NAME_MAP = Map.ofEntries(
             Map.entry("#ef4444", "Red"),
+            Map.entry("#ff0000", "Red"),
             Map.entry("#3b82f6", "Blue"),
+            Map.entry("#0000ff", "Blue"),
             Map.entry("#10b981", "Green"),
             Map.entry("#22c55e", "Green"),
-            Map.entry("#eab308", "Yellow"),
-            Map.entry("#d946ef", "Magenta"),
-            Map.entry("#06b6d4", "Cyan"),
+            Map.entry("#008000", "Green"),
             Map.entry("#f97316", "Orange"),
+            Map.entry("#eab308", "Yellow"),
+            Map.entry("#ffff00", "Yellow"),
+            Map.entry("#d946ef", "Purple / Magenta"),
+            Map.entry("#800080", "Purple"),
+            Map.entry("#a855f7", "Purple"),
+            Map.entry("#06b6d4", "Cyan"),
             Map.entry("#6366f1", "Indigo")
     );
 
@@ -298,20 +308,17 @@ public class PDFReportService {
             }
             document.add(pageSummaryTable);
 
-            // Mapping each detection to its number in its attribute group for labeling
+            // Mapping each detection to its number for labeling
             Map<String, Integer> detectionToNumberMap = new java.util.HashMap<>();
-            for (Map.Entry<String, List<Detection>> entry : groupedByAttr.entrySet()) {
-                List<Detection> attrDetections = entry.getValue();
-                int num = 1;
-                for (Detection det : attrDetections) {
-                    detectionToNumberMap.put(det.getId(), num++);
-                }
+            int globalIndex = 1;
+            for (Detection det : detections) {
+                detectionToNumberMap.put(det.getId(), globalIndex++);
             }
 
-            // Detailed Attribute Sections (starts on a new page)
+            // 4. Detailed Element Cards (Attribute-wise)
             if (!groupedByAttr.isEmpty()) {
                 document.newPage();
-                Paragraph r1Header = new Paragraph("Attribute-wise Breakdown", sectionFont);
+                Paragraph r1Header = new Paragraph("Detailed Element Analysis Cards", sectionFont);
                 r1Header.setSpacingAfter(15);
                 document.add(r1Header);
 
@@ -326,7 +333,6 @@ public class PDFReportService {
 
                     // Element Cards
                     for (Detection det : attrDetections) {
-                        // For the card, we render using the specific project file
                         BufferedImage baseImage = null;
                         ProjectFile pFile = projectFileRepository.findById(det.getFileId()).orElse(null);
                         if (pFile != null) {
@@ -349,7 +355,7 @@ public class PDFReportService {
 
                             int elementIndex = detectionToNumberMap.getOrDefault(det.getId(), 1);
                             PdfPTable card = createElementCardTable(
-                                    det, baseImage, elementIndex, labelFont, valueFont, document, pFile.getFileType());
+                                    det, baseImage, elementIndex, labelFont, valueFont, document, pFile != null ? pFile.getFileType() : "PDF", detectionToNumberMap);
                             if (card != null) {
                                 document.add(card);
                             }
@@ -358,143 +364,67 @@ public class PDFReportService {
                 }
             }
 
-            // Full Annotated Screenshot Section (starts on a new page)
-            // Group detections by fileId
+            // 5. Full-Page Document Annotated Visual Overview Section
             Map<String, List<Detection>> detectionsByFile = detections.stream()
                     .collect(Collectors.groupingBy(Detection::getFileId));
 
-            for (Map.Entry<String, List<Detection>> fileEntry : detectionsByFile.entrySet()) {
-                String fileId = fileEntry.getKey();
-                List<Detection> fileDets = fileEntry.getValue();
+            if (!detectionsByFile.isEmpty()) {
+                document.newPage();
+                Paragraph previewSectionTitle = new Paragraph("Full-Page Document Annotated Overview", sectionFont);
+                previewSectionTitle.setSpacingAfter(12);
+                document.add(previewSectionTitle);
 
-                ProjectFile pFile = projectFileRepository.findById(fileId).orElse(null);
-                if (pFile == null || pFile.isDeleted()) continue;
+                for (Map.Entry<String, List<Detection>> fileEntry : detectionsByFile.entrySet()) {
+                    String fileId = fileEntry.getKey();
+                    List<Detection> fileDets = fileEntry.getValue();
 
-                // Group detections of this file by page number to draw page-specific annotations
-                Map<Integer, List<Detection>> pageDetsMap = fileDets.stream()
-                        .collect(Collectors.groupingBy(Detection::getPageNumber));
+                    ProjectFile pFile = projectFileRepository.findById(fileId).orElse(null);
+                    if (pFile == null || pFile.isDeleted()) continue;
 
-                List<Integer> pagesWithDetections = pageDetsMap.keySet().stream()
-                        .sorted()
-                        .toList();
+                    Map<Integer, List<Detection>> pageDetsMap = fileDets.stream()
+                            .collect(Collectors.groupingBy(Detection::getPageNumber));
 
-                for (Integer pageNum : pagesWithDetections) {
-                    String pagePath = pFile.getFilePath();
-                    if ("PDF".equalsIgnoreCase(pFile.getFileType())) {
-                        try {
-                            pagePath = pdfRenderService.renderSinglePage(new File(pFile.getFilePath()), new File(project.getFolderPath()), pFile.getId(), pageNum, project.getFolderPath());
-                        } catch (Exception e) {
-                            System.err.println("Failed lazy page render for annotated screenshot: " + e.getMessage());
+                    List<Integer> pagesWithDetections = pageDetsMap.keySet().stream().sorted().toList();
+
+                    for (Integer pageNum : pagesWithDetections) {
+                        String pagePath = pFile.getFilePath();
+                        if ("PDF".equalsIgnoreCase(pFile.getFileType())) {
+                            try {
+                                pagePath = pdfRenderService.renderSinglePage(new File(pFile.getFilePath()), new File(project.getFolderPath()), pFile.getId(), pageNum, project.getFolderPath());
+                            } catch (Exception e) {
+                                System.err.println("Failed lazy page render for full page overview: " + e.getMessage());
+                            }
                         }
-                    }
-                    File pageImgFile = new File(pagePath);
+                        File pageImgFile = new File(pagePath);
 
-                    if (pageImgFile.exists()) {
-                        document.newPage();
+                        if (pageImgFile.exists()) {
+                            try {
+                                BufferedImage pageImg = ImageIO.read(pageImgFile);
+                                List<Detection> pageDets = pageDetsMap.getOrDefault(pageNum, List.of());
+                                BufferedImage annotatedImg = createAnnotatedPageImage(pageImg, pageDets, detectionToNumberMap, pFile.getFileType());
 
-                        String pageTitleText = String.format("Full Annotated Screenshot - %s (Page %d)", pFile.getOriginalFileName(), pageNum);
-                        Paragraph previewTitle = new Paragraph(pageTitleText, sectionFont);
-                        previewTitle.setSpacingAfter(10);
-                        document.add(previewTitle);
+                                if (annotatedImg != null) {
+                                    document.newPage();
+                                    String pageTitleText = String.format("Full Annotated Document - %s (Page %d of %d)", pFile.getOriginalFileName(), pageNum, pFile.getPageCount());
+                                    Paragraph pageHeading = new Paragraph(pageTitleText, sectionFont);
+                                    pageHeading.setSpacingAfter(10);
+                                    document.add(pageHeading);
 
-                        try {
-                            BufferedImage pageImg = ImageIO.read(pageImgFile);
+                                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                                    ImageIO.write(annotatedImg, "png", baos);
+                                    Image img = Image.getInstance(baos.toByteArray());
+                                    img.setAlignment(Element.ALIGN_CENTER);
 
-                            // Create a copy to draw on
-                            BufferedImage annotatedBimg = new BufferedImage(pageImg.getWidth(), pageImg.getHeight(), BufferedImage.TYPE_INT_ARGB);
-                            Graphics2D g2d = annotatedBimg.createGraphics();
-                            g2d.drawImage(pageImg, 0, 0, null); // Draw original image first
+                                    float maxW = document.getPageSize().getWidth() - document.leftMargin() - document.rightMargin();
+                                    float scaleRatio = maxW / img.getWidth();
+                                    img.scalePercent(scaleRatio * 95);
+                                    img.setSpacingAfter(15);
 
-                            g2d.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-                            g2d.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-
-                            List<Detection> pageDets = pageDetsMap.getOrDefault(pageNum, List.of());
-                            for (Detection det : pageDets) {
-                                try {
-                                    String hex = det.getColor();
-                                    Color rectColor = (hex != null && hex.startsWith("#")) ? Color.decode(hex) : Color.RED;
-
-                                    Detection.BoundingBox box = getScaledBox(det.getBoundingBox(), pageImg, pFile.getFileType());
-                                    if (box != null) {
-                                        int drawX = box.getX();
-                                        int drawY = box.getY();
-                                        int drawW = box.getWidth();
-                                        int drawH = box.getHeight();
-
-                                        // Normalize bounding box dimensions
-                                        if (drawW < 0) {
-                                            drawX = drawX + drawW;
-                                            drawW = -drawW;
-                                        }
-                                        if (drawH < 0) {
-                                            drawY = drawY + drawH;
-                                            drawH = -drawH;
-                                        }
-
-                                        // Draw rectangle border
-                                        g2d.setStroke(new java.awt.BasicStroke(4f));
-                                        g2d.setColor(rectColor);
-                                        g2d.drawRect(drawX, drawY, drawW, drawH);
-
-                                        // Draw light transparent overlay
-                                        g2d.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.15f));
-                                        g2d.fillRect(drawX, drawY, drawW, drawH);
-                                        g2d.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 1.0f));
-
-                                        // Label text
-                                        String label = String.format("%s - %d (%s)",
-                                                det.getAttribute(),
-                                                detectionToNumberMap.getOrDefault(det.getId(), 1),
-                                                getColorName(det.getColor()));
-
-                                        g2d.setFont(new java.awt.Font("Arial", java.awt.Font.BOLD, 14));
-                                        java.awt.FontMetrics fm = g2d.getFontMetrics();
-                                        int labelWidth = fm.stringWidth(label) + 12;
-                                        int labelHeight = fm.getHeight() + 6;
-
-                                        int textX = drawX;
-                                        int textY = drawY - 6;
-
-                                        // Ensure label stays within image bounds
-                                        if (textY - labelHeight < 0) {
-                                            textY = drawY + drawH + labelHeight;
-                                        }
-                                        if (textX + labelWidth > pageImg.getWidth()) {
-                                            textX = pageImg.getWidth() - labelWidth;
-                                        }
-                                        if (textX < 0) {
-                                            textX = 0;
-                                        }
-
-                                        // Draw background box for text
-                                        g2d.setColor(rectColor);
-                                        g2d.fillRect(textX, textY - labelHeight + 4, labelWidth, labelHeight);
-
-                                        // Draw white text label
-                                        g2d.setColor(Color.WHITE);
-                                        g2d.drawString(label, textX + 6, textY - fm.getDescent() + 3);
-                                    }
-                                } catch (Exception ex) {
-                                    System.err.println("Error drawing bounding box: " + ex.getMessage());
+                                    document.add(img);
                                 }
+                            } catch (Exception e) {
+                                System.err.println("Could not generate full page annotated overview image: " + e.getMessage());
                             }
-                            g2d.dispose();
-
-                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                            ImageIO.write(annotatedBimg, "png", baos);
-                            Image img = Image.getInstance(baos.toByteArray());
-
-                            img.setAlignment(Element.ALIGN_CENTER);
-                            float scaleRatio = (document.getPageSize().getWidth() - document.leftMargin() - document.rightMargin()) / img.getWidth();
-                            if (scaleRatio < 1.0f) {
-                                img.scalePercent(scaleRatio * 100);
-                            } else {
-                                img.scalePercent(80);
-                            }
-                            img.setSpacingAfter(20);
-                            document.add(img);
-                        } catch (Exception e) {
-                            System.err.println("Could not embed annotated image in PDF: " + e.getMessage());
                         }
                     }
                 }
@@ -509,21 +439,102 @@ public class PDFReportService {
         return out.toByteArray();
     }
 
+    private Color parseAwtColor(String hex) {
+        if (hex == null || hex.trim().isEmpty()) return Color.RED;
+        try {
+            String clean = hex.trim();
+            if (!clean.startsWith("#")) clean = "#" + clean;
+            return Color.decode(clean);
+        } catch (Exception e) {
+            return Color.RED;
+        }
+    }
+
     private String getColorName(String hex) {
         if (hex == null) return "Unknown";
         return HEX_TO_COLOR_NAME_MAP.getOrDefault(hex.toLowerCase(), hex);
     }
 
+    private BufferedImage createAnnotatedPageImage(BufferedImage pageImg, List<Detection> pageDets, Map<String, Integer> detectionToNumberMap, String uploadType) {
+        if (pageImg == null) return null;
+        try {
+            BufferedImage annotatedBimg = new BufferedImage(pageImg.getWidth(), pageImg.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g2d = annotatedBimg.createGraphics();
+            g2d.drawImage(pageImg, 0, 0, null);
+
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+            for (Detection det : pageDets) {
+                try {
+                    Color rectColor = parseAwtColor(det.getColor());
+                    Detection.BoundingBox box = getScaledBox(det.getBoundingBox(), pageImg, uploadType);
+                    if (box != null) {
+                        int drawX = box.getX();
+                        int drawY = box.getY();
+                        int drawW = box.getWidth();
+                        int drawH = box.getHeight();
+
+                        if (drawW < 0) { drawX += drawW; drawW = -drawW; }
+                        if (drawH < 0) { drawY += drawH; drawH = -drawH; }
+
+                        // 1. Thick colored border
+                        g2d.setStroke(new BasicStroke(4f));
+                        g2d.setColor(rectColor);
+                        g2d.drawRect(drawX, drawY, drawW, drawH);
+
+                        // 2. Light translucent overlay fill
+                        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.18f));
+                        g2d.fillRect(drawX, drawY, drawW, drawH);
+                        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
+
+                        // 3. Attribute tag badge label
+                        int elemNum = detectionToNumberMap.getOrDefault(det.getId(), 1);
+                        String label = String.format("%s #%d", det.getAttribute(), elemNum);
+
+                        g2d.setFont(new java.awt.Font("Arial", java.awt.Font.BOLD, 14));
+                        FontMetrics fm = g2d.getFontMetrics();
+                        int labelWidth = fm.stringWidth(label) + 14;
+                        int labelHeight = fm.getHeight() + 6;
+
+                        int textX = drawX;
+                        int textY = drawY - 6;
+                        if (textY - labelHeight < 0) {
+                            textY = drawY + drawH + labelHeight;
+                        }
+                        if (textX + labelWidth > pageImg.getWidth()) {
+                            textX = pageImg.getWidth() - labelWidth;
+                        }
+                        if (textX < 0) textX = 0;
+
+                        g2d.setColor(rectColor);
+                        g2d.fillRect(textX, textY - labelHeight + 4, labelWidth, labelHeight);
+
+                        g2d.setColor(Color.WHITE);
+                        g2d.drawString(label, textX + 7, textY - fm.getDescent() + 3);
+                    }
+                } catch (Exception ex) {
+                    System.err.println("Error rendering annotation box: " + ex.getMessage());
+                }
+            }
+            g2d.dispose();
+            return annotatedBimg;
+        } catch (Exception e) {
+            System.err.println("Failed to create annotated page image: " + e.getMessage());
+            return pageImg;
+        }
+    }
+
     private void addMetaCell(PdfPTable table, String label, String value, Font labelFont, Font valueFont) {
         PdfPCell labelCell = new PdfPCell(new Phrase(label, labelFont));
-        labelCell.setBackgroundColor(new Color(248, 250, 252)); // slate-50
-        labelCell.setBorderColor(new Color(226, 232, 240)); // slate-200
+        labelCell.setBackgroundColor(new Color(248, 250, 252));
+        labelCell.setBorderColor(new Color(226, 232, 240));
         labelCell.setPadding(8);
         labelCell.setBorder(Rectangle.BOX);
 
         PdfPCell valueCell = new PdfPCell(new Phrase(value, valueFont));
-        valueCell.setBackgroundColor(new Color(248, 250, 252)); // slate-50
-        valueCell.setBorderColor(new Color(226, 232, 240)); // slate-200
+        valueCell.setBackgroundColor(new Color(248, 250, 252));
+        valueCell.setBorderColor(new Color(226, 232, 240));
         valueCell.setPadding(8);
         valueCell.setBorder(Rectangle.BOX);
 
@@ -533,7 +544,7 @@ public class PDFReportService {
 
     private void addHeaderCell(PdfPTable table, String headerText, Font font) {
         PdfPCell cell = new PdfPCell(new Phrase(headerText, font));
-        cell.setBackgroundColor(new Color(15, 23, 42)); // Slate-900
+        cell.setBackgroundColor(new Color(15, 23, 42));
         cell.setPadding(8);
         cell.setHorizontalAlignment(Element.ALIGN_CENTER);
         cell.setBorderColor(new Color(226, 232, 240));
@@ -560,7 +571,7 @@ public class PDFReportService {
             scaleY = (double) originalImage.getHeight() / box.getCanvasHeight();
         } else {
             if ("PDF".equalsIgnoreCase(uploadType)) {
-                scaleX = 1.25; // 180 DPI / 144 DPI
+                scaleX = 1.25;
                 scaleY = 1.25;
             } else {
                 double s = Math.max(1.0, (double) originalImage.getWidth() / 800.0);
@@ -590,17 +601,9 @@ public class PDFReportService {
         int boxW = box.getWidth();
         int boxH = box.getHeight();
 
-        // Normalize dimensions
-        if (boxW < 0) {
-            boxX = boxX + boxW;
-            boxW = -boxW;
-        }
-        if (boxH < 0) {
-            boxY = boxY + boxH;
-            boxH = -boxH;
-        }
+        if (boxW < 0) { boxX += boxW; boxW = -boxW; }
+        if (boxH < 0) { boxY += boxH; boxH = -boxH; }
 
-        // Add padding for better context
         int padding = 15;
         int x = Math.max(0, boxX - padding);
         int y = Math.max(0, boxY - padding);
@@ -628,9 +631,9 @@ public class PDFReportService {
         PdfPCell cell = new PdfPCell();
         cell.setBorder(Rectangle.NO_BORDER);
 
-        cell.addElement(new Paragraph("ATTRIBUTE: " + attrName, sectionFont));
+        cell.addElement(new Paragraph("ATTRIBUTE: " + attrName.toUpperCase(), sectionFont));
 
-        String details = String.format("Color: %s | Total Elements: %d", colorName, count);
+        String details = String.format("Color Key: %s | Total Regions Tagged: %d", colorName, count);
         Paragraph detailsPara = new Paragraph(details, labelFont);
         detailsPara.setSpacingBefore(4);
         cell.addElement(detailsPara);
@@ -656,29 +659,10 @@ public class PDFReportService {
         table.addCell(vCell);
     }
 
-    private PdfPTable createElementCardTable(Detection det, BufferedImage baseImage, int index, Font labelFont, Font valueFont, Document document, String uploadType) {
-        // Debug Logging before PDF element card generation (Requirement 6)
-        String rawOcrText = det.getDetectedText();
+    private PdfPTable createElementCardTable(Detection det, BufferedImage baseImage, int index, Font labelFont, Font valueFont, Document document, String uploadType, Map<String, Integer> detectionToNumberMap) {
         double confidence = det.getConfidence() != null ? det.getConfidence() : 0.0;
-        String displayOcrText = (rawOcrText != null && !rawOcrText.trim().isEmpty()) ? rawOcrText : "OCR Failed";
-
-        System.out.println(String.format(
-            "%n=== DEBUG: PDF Generation Element #%d ===%n" +
-            "Element ID: %s%n" +
-            "Page: %d%n" +
-            "Attribute: %s | Color: %s%n" +
-            "Bounding Box: x=%d, y=%d, w=%d, h=%d%n" +
-            "Extracted Text: %s%n" +
-            "Confidence: %.1f%%%n" +
-            "Cropped Image Path: %s%n" +
-            "============================================",
-            index, det.getId(), det.getPageNumber(),
-            det.getAttribute(), getColorName(det.getColor()),
-            det.getBoundingBox().getX(), det.getBoundingBox().getY(), det.getBoundingBox().getWidth(), det.getBoundingBox().getHeight(),
-            displayOcrText,
-            confidence,
-            det.getCroppedImage() != null ? det.getCroppedImage() : "N/A"
-        ));
+        String rawOcrText = det.getDetectedText();
+        String displayOcrText = (rawOcrText != null && !rawOcrText.trim().isEmpty()) ? rawOcrText : "No readable text found";
 
         BufferedImage croppedBimg = null;
         try {
@@ -686,7 +670,7 @@ public class PDFReportService {
                 croppedBimg = cropImage(baseImage, det.getBoundingBox(), uploadType);
             }
         } catch (Exception e) {
-            System.err.println("Error cropping image from baseImage: " + e.getMessage());
+            System.err.println("Error cropping image: " + e.getMessage());
         }
 
         if (croppedBimg == null && det.getCroppedImage() != null) {
@@ -696,19 +680,24 @@ public class PDFReportService {
                     croppedBimg = ImageIO.read(savedCropFile);
                 }
             } catch (Exception e) {
-                System.err.println("Error reading saved croppedImage: " + e.getMessage());
+                System.err.println("Error reading saved crop: " + e.getMessage());
             }
         }
 
         if (croppedBimg == null) {
-            // Create a small fallback image placeholder so report card creation never crashes
-            croppedBimg = new BufferedImage(100, 40, BufferedImage.TYPE_INT_RGB);
+            croppedBimg = new BufferedImage(120, 40, BufferedImage.TYPE_INT_RGB);
             Graphics2D g = croppedBimg.createGraphics();
             g.setColor(new Color(241, 245, 249));
-            g.fillRect(0, 0, 100, 40);
+            g.fillRect(0, 0, 120, 40);
             g.setColor(new Color(148, 163, 184));
-            g.drawString("No Crop Preview", 8, 24);
+            g.drawString("No Crop Preview", 10, 24);
             g.dispose();
+        }
+
+        // Generate full-page annotated screenshot containing this element
+        BufferedImage annotatedPageBimg = null;
+        if (baseImage != null) {
+            annotatedPageBimg = createAnnotatedPageImage(baseImage, List.of(det), detectionToNumberMap, uploadType);
         }
 
         PdfPTable cardTable = new PdfPTable(1);
@@ -719,62 +708,70 @@ public class PDFReportService {
 
         PdfPCell cardCell = new PdfPCell();
         cardCell.setBorder(Rectangle.BOX);
-        cardCell.setBorderColor(new Color(226, 232, 240)); // Slate-200
-        cardCell.setPadding(15);
+        cardCell.setBorderColor(new Color(226, 232, 240));
+        cardCell.setPadding(12);
         cardCell.setBackgroundColor(Color.WHITE);
 
-        // Card Header: "Element X"
+        // Card Header
         PdfPTable cardHeader = new PdfPTable(1);
         cardHeader.setWidthPercentage(100);
-        PdfPCell headerCell = new PdfPCell(new Phrase("Element " + index, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, new Color(15, 23, 42))));
-        headerCell.setBackgroundColor(new Color(241, 245, 249)); // Slate-100
+        String headerTitleStr = String.format("Element #%d  |  Page %d  |  %s (%s)", index, det.getPageNumber(), det.getAttribute(), getColorName(det.getColor()));
+        PdfPCell headerCell = new PdfPCell(new Phrase(headerTitleStr, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, new Color(15, 23, 42))));
+        headerCell.setBackgroundColor(new Color(241, 245, 249));
         headerCell.setBorder(Rectangle.NO_BORDER);
         headerCell.setPadding(8);
         cardHeader.addCell(headerCell);
         cardCell.addElement(cardHeader);
 
         Paragraph space = new Paragraph(" ");
-        space.setSpacingBefore(8);
+        space.setSpacingBefore(6);
         cardCell.addElement(space);
 
-        // Body Grid Table
+        // Top Grid: 2 Columns (Cropped Region Image on left, Metadata Grid on right)
         PdfPTable bodyTable = new PdfPTable(2);
         bodyTable.setWidthPercentage(100);
         try {
-            bodyTable.setWidths(new float[]{4.5f, 5.5f});
+            bodyTable.setWidths(new float[]{4f, 6f});
         } catch (Exception e) {}
         bodyTable.getDefaultCell().setBorder(Rectangle.NO_BORDER);
 
-        // Left Cell: Image
-        PdfPCell imageCell = new PdfPCell();
-        imageCell.setBorder(Rectangle.NO_BORDER);
-        imageCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        imageCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        // Left Column: Cropped Image Box
+        PdfPCell croppedCell = new PdfPCell();
+        croppedCell.setBorder(Rectangle.BOX);
+        croppedCell.setBorderColor(new Color(226, 232, 240));
+        croppedCell.setPadding(8);
+        croppedCell.setBackgroundColor(new Color(248, 250, 252));
+        croppedCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        croppedCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+
+        Paragraph cropHeading = new Paragraph("Cropped Selected Region", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, new Color(71, 85, 105)));
+        cropHeading.setAlignment(Element.ALIGN_CENTER);
+        cropHeading.setSpacingAfter(6);
+        croppedCell.addElement(cropHeading);
 
         try {
             ByteArrayOutputStream croppedBaos = new ByteArrayOutputStream();
             ImageIO.write(croppedBimg, "png", croppedBaos);
             Image croppedImg = Image.getInstance(croppedBaos.toByteArray());
 
-            float maxImgW = 200f;
-            float maxImgH = 150f;
+            float maxImgW = 180f;
+            float maxImgH = 120f;
             float wScale = (maxImgW / croppedImg.getWidth()) * 100f;
             float hScale = (maxImgH / croppedImg.getHeight()) * 100f;
-            float finalScale = Math.min(wScale, hScale);
-            finalScale = Math.min(finalScale, 100f);
+            float finalScale = Math.min(Math.min(wScale, hScale), 100f);
 
             croppedImg.scalePercent(finalScale);
             croppedImg.setAlignment(Element.ALIGN_CENTER);
-            imageCell.addElement(croppedImg);
+            croppedCell.addElement(croppedImg);
         } catch (Exception e) {
-            imageCell.addElement(new Paragraph("[Error loading screenshot: " + e.getMessage() + "]", valueFont));
+            croppedCell.addElement(new Paragraph("[Cropped Image Error: " + e.getMessage() + "]", valueFont));
         }
-        bodyTable.addCell(imageCell);
+        bodyTable.addCell(croppedCell);
 
-        // Right Cell: Details
+        // Right Column: Metadata Grid
         PdfPCell detailsCell = new PdfPCell();
         detailsCell.setBorder(Rectangle.NO_BORDER);
-        detailsCell.setPaddingLeft(15);
+        detailsCell.setPaddingLeft(12);
 
         PdfPTable detailsGrid = new PdfPTable(2);
         detailsGrid.setWidthPercentage(100);
@@ -782,8 +779,8 @@ public class PDFReportService {
             detailsGrid.setWidths(new float[]{3.8f, 6.2f});
         } catch (Exception e) {}
 
-        Font keyFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, new Color(71, 85, 105)); // Slate-600
-        Font valFont = FontFactory.getFont(FontFactory.HELVETICA, 10, new Color(15, 23, 42)); // Slate-900
+        Font keyFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, new Color(71, 85, 105));
+        Font valFont = FontFactory.getFont(FontFactory.HELVETICA, 9, new Color(15, 23, 42));
 
         String bboxStr = String.format("x=%d, y=%d, w=%d, h=%d",
                 det.getBoundingBox().getX(), det.getBoundingBox().getY(),
@@ -791,34 +788,51 @@ public class PDFReportService {
 
         addGridRow(detailsGrid, "Attribute", det.getAttribute(), keyFont, valFont);
         addGridRow(detailsGrid, "Color", getColorName(det.getColor()), keyFont, valFont);
-        addGridRow(detailsGrid, "Page Number", String.valueOf(det.getPageNumber()), keyFont, valFont);
+        addGridRow(detailsGrid, "Page Number", "Page " + det.getPageNumber(), keyFont, valFont);
         addGridRow(detailsGrid, "Bounding Box", bboxStr, keyFont, valFont);
         addGridRow(detailsGrid, "OCR Confidence", String.format("%.2f%%", confidence), keyFont, valFont);
         if (det.getProcessingTimeMs() != null) {
             addGridRow(detailsGrid, "Processing Time", det.getProcessingTimeMs() + " ms", keyFont, valFont);
         }
-        if (det.getImageResolution() != null) {
-            addGridRow(detailsGrid, "Resolution", det.getImageResolution(), keyFont, valFont);
-        }
-        if (det.getOcrStatus() != null) {
-            addGridRow(detailsGrid, "OCR Status", det.getOcrStatus(), keyFont, valFont);
-        }
 
         detailsCell.addElement(detailsGrid);
 
-        Paragraph textHeader = new Paragraph("Detected Text", keyFont);
-        textHeader.setSpacingBefore(10);
-        textHeader.setSpacingAfter(4);
+        Paragraph textHeader = new Paragraph("Detected OCR Text", keyFont);
+        textHeader.setSpacingBefore(8);
+        textHeader.setSpacingAfter(3);
         detailsCell.addElement(textHeader);
 
         Paragraph textVal = new Paragraph(displayOcrText, valFont);
-        textVal.setSpacingAfter(5);
+        textVal.setSpacingAfter(4);
         detailsCell.addElement(textVal);
 
         bodyTable.addCell(detailsCell);
         cardCell.addElement(bodyTable);
-        cardTable.addCell(cardCell);
 
+        // Bottom Section: Annotated Full Page Screenshot Thumbnail showing exact location
+        if (annotatedPageBimg != null) {
+            Paragraph fullPageHead = new Paragraph("Annotated Full Page Location (Page " + det.getPageNumber() + ")", keyFont);
+            fullPageHead.setSpacingBefore(10);
+            fullPageHead.setSpacingAfter(6);
+            cardCell.addElement(fullPageHead);
+
+            try {
+                ByteArrayOutputStream fullBaos = new ByteArrayOutputStream();
+                ImageIO.write(annotatedPageBimg, "png", fullBaos);
+                Image fullImg = Image.getInstance(fullBaos.toByteArray());
+                fullImg.setAlignment(Element.ALIGN_CENTER);
+
+                float maxW = document.getPageSize().getWidth() - document.leftMargin() - document.rightMargin() - 30;
+                float scaleRatio = (maxW / fullImg.getWidth()) * 100f;
+                fullImg.scalePercent(Math.min(scaleRatio, 65f));
+
+                cardCell.addElement(fullImg);
+            } catch (Exception e) {
+                System.err.println("Error embedding annotated full page screenshot: " + e.getMessage());
+            }
+        }
+
+        cardTable.addCell(cardCell);
         return cardTable;
     }
 }
