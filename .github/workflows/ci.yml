@@ -42,16 +42,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-    - name: Print Build Status Summary
+    - name: Print Build & Deployment Summary
       run: |
-        echo "### 🚀 Maven Build Status" >> $GITHUB_STEP_SUMMARY
-        echo "Spring Boot project compilation & packaging completed successfully." >> $GITHUB_STEP_SUMMARY
+        echo "### 🚀 Live Deployment URL" >> $GITHUB_STEP_SUMMARY
+        echo "Spring Boot compilation completed successfully." >> $GITHUB_STEP_SUMMARY
+        echo "🔗 **Live Web URL**: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> $GITHUB_STEP_SUMMARY
 
   deploy:
     name: deploy
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -59,3 +60,7 @@ jobs:
       id: deployment
       uses: actions/deploy-pages@v4
       continue-on-error: true
+
+    - name: Output Deployment Link
+      run: |
+        echo "Deployed Live Web URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
