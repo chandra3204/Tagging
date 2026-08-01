@@ -309,13 +309,13 @@ public class PDFReportService {
             }
 
             // Detailed Attribute Sections (starts on a new page)
-            if (!grouped.isEmpty()) {
+            if (!groupedByAttr.isEmpty()) {
                 document.newPage();
                 Paragraph r1Header = new Paragraph("Attribute-wise Breakdown", sectionFont);
                 r1Header.setSpacingAfter(15);
                 document.add(r1Header);
 
-                for (Map.Entry<String, List<Detection>> entry : grouped.entrySet()) {
+                for (Map.Entry<String, List<Detection>> entry : groupedByAttr.entrySet()) {
                     String attrName = entry.getKey();
                     List<Detection> attrDetections = entry.getValue();
                     String colorHex = attrDetections.get(0).getColor();
@@ -332,7 +332,11 @@ public class PDFReportService {
                         if (pFile != null) {
                             String pagePath = pFile.getFilePath();
                             if ("PDF".equalsIgnoreCase(pFile.getFileType())) {
-                                pagePath = project.getFolderPath() + "/" + pFile.getId() + "_page_" + det.getPageNumber() + ".png";
+                                try {
+                                    pagePath = pdfRenderService.renderSinglePage(new File(pFile.getFilePath()), new File(project.getFolderPath()), pFile.getId(), det.getPageNumber(), project.getFolderPath());
+                                } catch (Exception e) {
+                                    System.err.println("Failed lazy page render for report card: " + e.getMessage());
+                                }
                             }
                             File pageFile = new File(pagePath);
                             if (pageFile.exists()) {
@@ -377,7 +381,11 @@ public class PDFReportService {
                 for (Integer pageNum : pagesWithDetections) {
                     String pagePath = pFile.getFilePath();
                     if ("PDF".equalsIgnoreCase(pFile.getFileType())) {
-                        pagePath = project.getFolderPath() + "/" + pFile.getId() + "_page_" + pageNum + ".png";
+                        try {
+                            pagePath = pdfRenderService.renderSinglePage(new File(pFile.getFilePath()), new File(project.getFolderPath()), pFile.getId(), pageNum, project.getFolderPath());
+                        } catch (Exception e) {
+                            System.err.println("Failed lazy page render for annotated screenshot: " + e.getMessage());
+                        }
                     }
                     File pageImgFile = new File(pagePath);
 
@@ -672,15 +680,35 @@ public class PDFReportService {
             det.getCroppedImage() != null ? det.getCroppedImage() : "N/A"
         ));
 
-        BufferedImage croppedBimg;
+        BufferedImage croppedBimg = null;
         try {
-            croppedBimg = cropImage(baseImage, det.getBoundingBox(), uploadType);
-            if (croppedBimg == null) {
-                return null;
+            if (baseImage != null && det.getBoundingBox() != null) {
+                croppedBimg = cropImage(baseImage, det.getBoundingBox(), uploadType);
             }
         } catch (Exception e) {
-            System.err.println("Error cropping image: " + e.getMessage());
-            return null;
+            System.err.println("Error cropping image from baseImage: " + e.getMessage());
+        }
+
+        if (croppedBimg == null && det.getCroppedImage() != null) {
+            try {
+                File savedCropFile = new File(det.getCroppedImage());
+                if (savedCropFile.exists()) {
+                    croppedBimg = ImageIO.read(savedCropFile);
+                }
+            } catch (Exception e) {
+                System.err.println("Error reading saved croppedImage: " + e.getMessage());
+            }
+        }
+
+        if (croppedBimg == null) {
+            // Create a small fallback image placeholder so report card creation never crashes
+            croppedBimg = new BufferedImage(100, 40, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = croppedBimg.createGraphics();
+            g.setColor(new Color(241, 245, 249));
+            g.fillRect(0, 0, 100, 40);
+            g.setColor(new Color(148, 163, 184));
+            g.drawString("No Crop Preview", 8, 24);
+            g.dispose();
         }
 
         PdfPTable cardTable = new PdfPTable(1);
