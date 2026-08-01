@@ -34,6 +34,13 @@ public class DetectionController {
         return detectionRepository.findByFileId(fileId);
     }
 
+    @GetMapping("/projects/{projectId}/files/{fileId}/pages/{pageNumber}/detections")
+    public List<Detection> getDetectionsForFilePage(@PathVariable String projectId,
+                                                    @PathVariable String fileId,
+                                                    @PathVariable int pageNumber) {
+        return detectionRepository.findByFileIdAndPageNumber(fileId, pageNumber);
+    }
+
     @PostMapping("/projects/{projectId}/detections")
     public ResponseEntity<?> createDetection(@PathVariable String projectId, @RequestBody Detection detection) {
         if (detection.getAttribute() == null || detection.getColor() == null ||

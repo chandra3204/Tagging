@@ -128,12 +128,11 @@ public class ProjectService {
         int pageCount = 1;
         if (extension.equalsIgnoreCase("pdf")) {
             try {
-                // PDF page count rendering
-                List<String> renderedPages = pdfRenderService.renderPdfToImages(destinationFile, projectDir, fileUuid, project.getFolderPath());
-                pageCount = renderedPages.size();
+                pageCount = pdfRenderService.getPdfPageCount(destinationFile);
+                projectFile.setPageCount(pageCount);
                 projectFile.setOcrStatus("COMPLETED");
             } catch (Exception e) {
-                System.err.println("Error rendering PDF pages: " + e.getMessage());
+                System.err.println("Error reading PDF page count: " + e.getMessage());
                 projectFile.setOcrStatus("FAILED");
             }
         } else {

@@ -250,19 +250,15 @@ public class OcrService {
 
         // If OCR failed entirely
         if (result == null) {
-            return new OcrResult("Unable to detect readable text.", 0.0);
+            return new OcrResult("OCR Failed", 0.0);
         }
 
-        // Custom failure error messages based on confidence values
         String text = result.getDetectedText();
         double confidence = result.getConfidence();
 
-        if (text.trim().isEmpty() || confidence < 35.0) {
-            if (confidence < 10.0) {
-                text = "No readable text found";
-            } else {
-                text = "Unable to detect readable text.";
-            }
+        if (text == null || text.trim().isEmpty()) {
+            text = "OCR Failed";
+            confidence = 0.0;
         }
 
         return new OcrResult(text, confidence);

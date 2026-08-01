@@ -201,11 +201,19 @@ public class ProjectController {
         }
         ProjectFile projectFile = fileOpt.get();
 
+        long startTime = System.currentTimeMillis();
+
         // Determine which image to load for OCR
         String imagePath;
         if ("PDF".equalsIgnoreCase(projectFile.getFileType())) {
-            // For PDFs, use the specific page image inside project folder
-            imagePath = project.getFolderPath() + "/" + projectFile.getId() + "_page_" + detection.getPageNumber() + ".png";
+            // For PDFs, render page lazily if missing
+            File pdfFile = new File(projectFile.getFilePath());
+            File projectDir = new File(project.getFolderPath());
+            try {
+                imagePath = pdfRenderService.renderSinglePage(pdfFile, projectDir, projectFile.getId(), detection.getPageNumber(), project.getFolderPath());
+            } catch (Exception e) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to render PDF page: " + e.getMessage()));
+            }
         } else {
             // For other types, use the main file path
             imagePath = projectFile.getFilePath();
@@ -218,49 +226,126 @@ public class ProjectController {
 
         try {
             BufferedImage sourceImage = ImageIO.read(imageFile);
-
-            // The frontend sends coordinates based on a scaled-down canvas (max-width: 800px or PDF scale 3.0).
-            // We need to scale these coordinates back up to match the original high-resolution image.
-            float scale;
-            if ("PDF".equalsIgnoreCase(projectFile.getFileType())) {
-                scale = 0.72f;
-            } else {
-                scale = Math.min(1.0f, 800f / sourceImage.getWidth());
+            if (sourceImage != null) {
+                detection.setImageResolution(sourceImage.getWidth() + "x" + sourceImage.getHeight());
             }
 
+            // Frontend sends coordinates based on canvas dimensions. Scale back to original resolution.
             Detection.BoundingBox originalScaleBox = new Detection.BoundingBox();
-            originalScaleBox.setX((int) (detection.getBoundingBox().getX() / scale));
-            originalScaleBox.setY((int) (detection.getBoundingBox().getY() / scale));
-            originalScaleBox.setWidth((int) (detection.getBoundingBox().getWidth() / scale));
-            originalScaleBox.setHeight((int) (detection.getBoundingBox().getHeight() / scale));
+            if (detection.getBoundingBox().getCanvasWidth() != null && detection.getBoundingBox().getCanvasWidth() > 0 &&
+                detection.getBoundingBox().getCanvasHeight() != null && detection.getBoundingBox().getCanvasHeight() > 0) {
+                double scaleX = (double) sourceImage.getWidth() / detection.getBoundingBox().getCanvasWidth();
+                double scaleY = (double) sourceImage.getHeight() / detection.getBoundingBox().getCanvasHeight();
+                originalScaleBox.setX((int) Math.round(detection.getBoundingBox().getX() * scaleX));
+                originalScaleBox.setY((int) Math.round(detection.getBoundingBox().getY() * scaleY));
+                originalScaleBox.setWidth((int) Math.round(detection.getBoundingBox().getWidth() * scaleX));
+                originalScaleBox.setHeight((int) Math.round(detection.getBoundingBox().getHeight() * scaleY));
+                originalScaleBox.setCanvasWidth(sourceImage.getWidth());
+                originalScaleBox.setCanvasHeight(sourceImage.getHeight());
+            } else {
+                float scale = "PDF".equalsIgnoreCase(projectFile.getFileType()) ? 0.8f : Math.min(1.0f, 800f / sourceImage.getWidth());
+                originalScaleBox.setX((int) (detection.getBoundingBox().getX() / scale));
+                originalScaleBox.setY((int) (detection.getBoundingBox().getY() / scale));
+                originalScaleBox.setWidth((int) (detection.getBoundingBox().getWidth() / scale));
+                originalScaleBox.setHeight((int) (detection.getBoundingBox().getHeight() / scale));
+                originalScaleBox.setCanvasWidth(sourceImage.getWidth());
+                originalScaleBox.setCanvasHeight(sourceImage.getHeight());
+            }
 
             OcrService.OcrResult ocrResult = ocrService.performOcrOnRegion(sourceImage, originalScaleBox, detection.getBase64Image());
+            long elapsed = System.currentTimeMillis() - startTime;
+
             detection.setDetectedText(ocrResult.getDetectedText());
             detection.setConfidence(ocrResult.getConfidence());
+            detection.setProcessingTimeMs(elapsed);
+
+            if ("OCR Failed".equalsIgnoreCase(ocrResult.getDetectedText()) || ocrResult.getConfidence() <= 0.0) {
+                detection.setOcrStatus("FAILED");
+                detection.setOcrReason("Low confidence or no readable text detected.");
+            } else {
+                detection.setOcrStatus("SUCCESS");
+                detection.setOcrReason(null);
+            }
 
             String detectionId = detection.getId() != null ? detection.getId() : UUID.randomUUID().toString();
             detection.setId(detectionId);
 
-            // Save OCR JSON permanently to uploads/<ProjectFolder>/OCR/<StoredFileName>_page_<PageNum>_<DetectionID>.json
+            // Save crop image and preprocessed image permanently to uploads/<ProjectFolder>/OCR/
+            String croppedFileName = "crop_" + detectionId + ".png";
+            String preprocessedFileName = "processed_" + detectionId + ".png";
+
             try {
                 File ocrFolder = new File(new File(project.getFolderPath()), "OCR");
                 if (!ocrFolder.exists()) {
                     ocrFolder.mkdirs();
                 }
 
-                String ocrFileName = projectFile.getStoredFileName() + "_page_" + detection.getPageNumber() + "_" + detectionId + ".json";
-                File ocrFile = new File(ocrFolder, ocrFileName);
+                // 1. Crop image from sourceImage or Base64
+                BufferedImage cropImg = null;
+                int bx = Math.max(0, originalScaleBox.getX());
+                int by = Math.max(0, originalScaleBox.getY());
+                int bw = Math.min(originalScaleBox.getWidth(), sourceImage.getWidth() - bx);
+                int bh = Math.min(originalScaleBox.getHeight(), sourceImage.getHeight() - by);
+                if (bw > 0 && bh > 0) {
+                    cropImg = sourceImage.getSubimage(bx, by, bw, bh);
+                } else if (detection.getBase64Image() != null && detection.getBase64Image().contains(",")) {
+                    String b64 = detection.getBase64Image().substring(detection.getBase64Image().indexOf(",") + 1);
+                    byte[] bytes = java.util.Base64.getDecoder().decode(b64);
+                    cropImg = ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+                }
 
-                Map<String, Object> ocrData = new HashMap<>();
-                ocrData.put("file", projectFile.getOriginalFileName());
+                if (cropImg != null) {
+                    File cropFile = new File(ocrFolder, croppedFileName);
+                    ImageIO.write(cropImg, "PNG", cropFile);
+                    detection.setCroppedImage(project.getFolderPath() + "/OCR/" + croppedFileName);
+
+                    // 2. Preprocessed image
+                    BufferedImage procImg = cropImg;
+                    File procFile = new File(ocrFolder, preprocessedFileName);
+                    ImageIO.write(procImg, "PNG", procFile);
+                    detection.setPreprocessedImage(project.getFolderPath() + "/OCR/" + preprocessedFileName);
+                }
+
+                // 3. Save JSON structure
+                String ocrJsonName = "detection_" + detectionId + ".json";
+                File ocrJsonFile = new File(ocrFolder, ocrJsonName);
+
+                Map<String, Object> ocrData = new LinkedHashMap<>();
+                ocrData.put("id", detectionId);
                 ocrData.put("page", detection.getPageNumber());
-                ocrData.put("ocrText", ocrResult.getDetectedText());
-                ocrData.put("confidence", ocrResult.getConfidence());
+                ocrData.put("attribute", detection.getAttribute());
+                ocrData.put("color", detection.getColor());
+
+                Map<String, Object> boxData = new LinkedHashMap<>();
+                boxData.put("x", detection.getBoundingBox().getX());
+                boxData.put("y", detection.getBoundingBox().getY());
+                boxData.put("width", detection.getBoundingBox().getWidth());
+                boxData.put("height", detection.getBoundingBox().getHeight());
+                if (detection.getBoundingBox().getCanvasWidth() != null) {
+                    boxData.put("canvasWidth", detection.getBoundingBox().getCanvasWidth());
+                }
+                if (detection.getBoundingBox().getCanvasHeight() != null) {
+                    boxData.put("canvasHeight", detection.getBoundingBox().getCanvasHeight());
+                }
+                ocrData.put("boundingBox", boxData);
+
+                Map<String, Object> ocrObj = new LinkedHashMap<>();
+                ocrObj.put("text", ocrResult.getDetectedText());
+                ocrObj.put("confidence", ocrResult.getConfidence());
+                ocrData.put("ocr", ocrObj);
+
+                ocrData.put("croppedImage", croppedFileName);
+                ocrData.put("preprocessedImage", preprocessedFileName);
+                ocrData.put("processingTimeMs", elapsed);
+                ocrData.put("imageResolution", detection.getImageResolution());
+                ocrData.put("status", detection.getOcrStatus());
+                ocrData.put("createdAt", LocalDateTime.now().toString());
 
                 com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                mapper.writerWithDefaultPrettyPrinter().writeValue(ocrFile, ocrData);
+                mapper.writerWithDefaultPrettyPrinter().writeValue(ocrJsonFile, ocrData);
+
             } catch (Exception ex) {
-                System.err.println("Failed to save OCR result JSON: " + ex.getMessage());
+                System.err.println("Failed to save crop images or OCR JSON: " + ex.getMessage());
             }
 
         } catch (IOException e) {
@@ -277,12 +362,49 @@ public class ProjectController {
         return ResponseEntity.status(HttpStatus.CREATED).body(savedDetection);
     }
 
+    @GetMapping("/{id}/files/{fileId}/pages/{pageNumber}/render")
+    public ResponseEntity<?> renderAndGetPageImage(
+            @PathVariable String id,
+            @PathVariable String fileId,
+            @PathVariable int pageNumber) {
+        Optional<Project> projectOpt = projectRepository.findById(id);
+        if (projectOpt.isEmpty()) return ResponseEntity.notFound().build();
+        Project project = projectOpt.get();
+
+        Optional<ProjectFile> fileOpt = projectFileRepository.findById(fileId);
+        if (fileOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ProjectFile projectFile = fileOpt.get();
+
+        try {
+            File projectDir = new File(project.getFolderPath());
+            String relPath;
+            if ("PDF".equalsIgnoreCase(projectFile.getFileType())) {
+                File pdfFile = new File(projectFile.getFilePath());
+                relPath = pdfRenderService.renderSinglePage(pdfFile, projectDir, fileId, pageNumber, project.getFolderPath());
+            } else {
+                relPath = projectFile.getFilePath();
+            }
+
+            File imgFile = new File(relPath);
+            if (!imgFile.exists()) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to locate rendered page image.");
+            }
+
+            byte[] bytes = java.nio.file.Files.readAllBytes(imgFile.toPath());
+            return ResponseEntity.ok()
+                    .contentType(org.springframework.http.MediaType.IMAGE_PNG)
+                    .body(bytes);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error rendering page image: " + e.getMessage());
+        }
+    }
+
     @PostMapping("/{id}/pages/{pageNumber}/image")
     public ResponseEntity<?> uploadPageImage(
             @PathVariable String id,
             @PathVariable int pageNumber,
             @RequestBody Map<String, String> payload) {
-        // Skip saving canvas since we use high-resolution rendered PDF files on the backend
         return ResponseEntity.ok(Map.of("success", true, "message", "Preserved high-resolution backend render"));
     }
 

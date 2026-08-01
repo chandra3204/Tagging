@@ -21,10 +21,14 @@ let totalPages = 1;
 
 let canvas, ctx;
 let imageElement = null;
+let pageAnnotationsCache = new Map();
 
 let isDrawing = false;
 let selectionRect = {};
 let startX, startY;
+let pdfDocument = null;
+let pdfLoadingPromise = null;
+let pdfPageCache = new Map();
 
 // This variable is no longer used for auto-detection and is only populated for the DOCX sandbox.
 let detectedBoxes = [];
@@ -64,6 +68,102 @@ function showToast(message, type = 'success') {
   }, 3000);
 }
 
+function getSelectedAttributeColorHex() {
+  if (selectedAttribute && selectedAttribute.color) {
+    const explicitColor = COLOR_MAP[selectedAttribute.color] || selectedAttribute.color;
+    return explicitColor.startsWith('#') ? explicitColor : `#${explicitColor}`;
+  }
+  return '#ef4444';
+}
+
+function getColorWithAlpha(colorHex, alpha) {
+  if (!colorHex) return `rgba(239, 68, 68, ${alpha})`;
+  const normalized = colorHex.startsWith('#') ? colorHex : `#${colorHex}`;
+  const hex = normalized.slice(1);
+  const fullHex = hex.length === 3 ? hex.split('').map(ch => ch + ch).join('') : hex;
+  const r = parseInt(fullHex.slice(0, 2), 16);
+  const g = parseInt(fullHex.slice(2, 4), 16);
+  const b = parseInt(fullHex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function applySelectionCursor() {
+  if (!canvas) return;
+  if (!selectedAttribute) {
+    canvas.style.cursor = 'default';
+    return;
+  }
+
+  const colorHex = getSelectedAttributeColorHex();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" fill="transparent"/><line x1="12" y1="2" x2="12" y2="22" stroke="${colorHex}" stroke-width="2" stroke-linecap="round"/><line x1="2" y1="12" x2="22" y2="12" stroke="${colorHex}" stroke-width="2" stroke-linecap="round"/></svg>`;
+  const encoded = encodeURIComponent(svg).replace(/'/g, '%27');
+  canvas.style.cursor = `url("data:image/svg+xml;charset=utf-8,${encoded}") 12 12, crosshair`;
+}
+
+function getAnnotationStorageKey() {
+  if (!currentProject || !currentFile) return null;
+  return `tagging-annotations-${currentProject.id}-${currentFile.id}`;
+}
+
+function persistPageAnnotations() {
+  const storageKey = getAnnotationStorageKey();
+  if (!storageKey) return;
+  const serialized = Object.fromEntries(pageAnnotationsCache.entries());
+  localStorage.setItem(storageKey, JSON.stringify(serialized));
+}
+
+function restorePageAnnotations() {
+  const storageKey = getAnnotationStorageKey();
+  if (!storageKey) return;
+
+  const storedValue = localStorage.getItem(storageKey);
+  if (!storedValue) return;
+
+  try {
+    const parsed = JSON.parse(storedValue);
+    const map = new Map();
+    Object.keys(parsed).forEach(k => {
+      const pageNum = Number(k);
+      try {
+        map.set(pageNum, parsed[k]);
+      } catch (e) {
+        map.set(pageNum, parsed[k]);
+      }
+    });
+    pageAnnotationsCache = map;
+  } catch (err) {
+    console.warn('Failed to restore page annotations from storage', err);
+  }
+}
+
+function resetAnnotationState() {
+  pageAnnotationsCache = new Map();
+  persistPageAnnotations();
+}
+
+function resetPdfViewerState() {
+  pdfDocument = null;
+  pdfLoadingPromise = null;
+  pdfPageCache = new Map();
+}
+
+function drawSelectionHandles(ctx, x, y, width, height, color) {
+  const handleSize = Math.max(6, Math.min(10, Math.round(Math.max(canvas.width, canvas.height) / 180)));
+  const points = [
+    { x, y },
+    { x: x + width, y },
+    { x, y: y + height },
+    { x: x + width, y: y + height }
+  ];
+
+  ctx.save();
+  ctx.fillStyle = color;
+  points.forEach(point => {
+    ctx.fillRect(point.x - handleSize / 2, point.y - handleSize / 2, handleSize, handleSize);
+  });
+  ctx.restore();
+}
+
 // Initialise Workspace if on analysis page
 document.addEventListener('DOMContentLoaded', () => {
   const projectId = getQueryParam('id');
@@ -96,6 +196,7 @@ async function initWorkspace(projectId) {
     setupForms();
     setupPDFReportButton();
     setupAddFileInput();
+      setupPageControls();
 
   } catch (err) {
     console.error(err);
@@ -107,6 +208,10 @@ async function initWorkspace(projectId) {
 async function loadWorkspaceImage() {
   detectedBoxes = []; // Clear any mock boxes
   let imageUrl = '';
+
+  if (currentFile && currentFile.fileType === 'PDF') {
+    resetPdfViewerState();
+  }
 
   if (!currentFile) {
     drawEmptyWorkspace();
@@ -142,62 +247,115 @@ async function loadWorkspaceImage() {
   };
 }
 
-async function loadPdfPageUsingPdfJs() {
-  if (!currentFile) return;
-  const pdfUrl = `/${currentFile.filePath}`;
-  
-  try {
-    const helpText = document.getElementById('workspace-help-text');
-    if (helpText) {
-      helpText.innerHTML = `<i class="fa-solid fa-spinner fa-spin" style="margin-right: 6px;"></i> Rendering PDF page...`;
-    }
+async function loadPdfDocument() {
+  if (!currentFile || currentFile.fileType !== 'PDF') return null;
+  if (pdfDocument) return pdfDocument;
+  if (pdfLoadingPromise) return pdfLoadingPromise;
 
-    if (typeof pdfjsLib !== 'undefined') {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+  const pdfUrl = `/${currentFile.filePath}`;
+  if (typeof pdfjsLib === 'undefined') {
+    throw new Error('PDF.js is not available');
+  }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+  pdfLoadingPromise = pdfjsLib.getDocument(pdfUrl).promise.then(doc => {
+    pdfDocument = doc;
+    return doc;
+  });
+
+  return pdfLoadingPromise;
+}
+
+async function renderPdfPage(pageNumber) {
+  const cachedPage = pdfPageCache.get(pageNumber);
+  if (cachedPage && cachedPage.complete) {
+    return cachedPage;
+  }
+
+  // 1. Try PDF.js rendering in browser
+  try {
+    const doc = await loadPdfDocument();
+    if (doc) {
+      const page = await doc.getPage(pageNumber);
+      const scale = 2.0;
+      const viewport = page.getViewport({ scale });
+
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = viewport.width;
+      tempCanvas.height = viewport.height;
+      const tempContext = tempCanvas.getContext('2d');
+      tempContext.fillStyle = '#FFFFFF';
+      tempContext.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+      await page.render({ canvasContext: tempContext, viewport }).promise;
+
+      const dataUrl = tempCanvas.toDataURL('image/png');
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+
+      pdfPageCache.set(pageNumber, img);
+      if (pdfPageCache.size > 8) {
+        const oldestKey = pdfPageCache.keys().next().value;
+        if (typeof oldestKey !== 'undefined') {
+          pdfPageCache.delete(oldestKey);
+        }
+      }
+      return img;
     }
-    const loadingTask = pdfjsLib.getDocument(pdfUrl);
-    const pdfDoc = await loadingTask.promise;
-    
-    const page = await pdfDoc.getPage(currentPage);
-    
-    // Render at high scale 3.0 for premium quality (300 DPI equivalent)
-    const scale = 3.0;
-    const viewport = page.getViewport({ scale: scale });
-    
-    // Set canvas dimensions
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+  } catch (err) {
+    console.warn("Client PDF.js render error on page " + pageNumber + ", falling back to backend lazy render: ", err);
+  }
+
+  // 2. Server-side Lazy Render Fallback Endpoint
+  const backendUrl = `/api/projects/${currentProject.id}/files/${currentFile.id}/pages/${pageNumber}/render`;
+  const img = new Image();
+  img.src = backendUrl;
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+  });
+
+  pdfPageCache.set(pageNumber, img);
+  return img;
+}
+
+async function loadPdfPageUsingPdfJs() {
+  if (!currentFile || currentFile.fileType !== 'PDF') return;
+
+  const helpText = document.getElementById('workspace-help-text');
+  if (helpText) {
+    helpText.innerHTML = `<i class="fa-solid fa-spinner fa-spin" style="margin-right: 6px;"></i> Loading page ${currentPage} of ${totalPages}...`;
+  }
+
+  try {
+    const pageImage = await renderPdfPage(currentPage);
+    if (!pageImage) throw new Error('Unable to render PDF page');
+
+    imageElement = pageImage;
+    canvas.width = pageImage.naturalWidth || pageImage.width;
+    canvas.height = pageImage.naturalHeight || pageImage.height;
     canvas.style.width = '100%';
     canvas.style.height = 'auto';
     canvas.style.backgroundColor = '#FFFFFF';
-    
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    const renderContext = {
-      canvasContext: ctx,
-      viewport: viewport
-    };
-    
-    await page.render(renderContext).promise;
-    
-    // Cache page visual to imageElement for clean annotation-free cropping
-    const dataUrl = canvas.toDataURL('image/png');
-    imageElement = new Image();
-    imageElement.src = dataUrl;
-    
-    imageElement.onload = () => {
-      redrawCanvas();
-      if (helpText) {
-        helpText.innerHTML = `<i class="fa-solid fa-mouse-pointer" style="margin-right: 6px;"></i> Select an active attribute, then click and drag to draw a selection rectangle. OCR will run on the selected area.`;
-      }
-    };
-    
+
+    redrawCanvas();
+    applySelectionCursor();
+
+    if (helpText) {
+      helpText.innerHTML = `<i class="fa-solid fa-mouse-pointer" style="margin-right: 6px;"></i> Select an active attribute, then click and drag to draw a selection rectangle. OCR will run on the selected area.`;
+    }
+
+    if (currentPage < totalPages) {
+      renderPdfPage(currentPage + 1).catch(() => {});
+    }
   } catch (err) {
-    console.error("PDF.js render error: ", err);
+    console.error('PDF page render error: ', err);
     showToast('Failed to render PDF page.', 'error');
     drawFallbackCanvas();
-    const helpText = document.getElementById('workspace-help-text');
     if (helpText) {
       helpText.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="margin-right: 6px; color: var(--danger);"></i> Unable to render PDF.`;
     }
@@ -351,15 +509,18 @@ class CanvasRenderer {
     if (!currentFile) return;
 
     // 2. Draw Saved Detections for Current File & Page
-    const pageDetections = detections.filter(d => d.pageNumber === currentPage);
+      const pageDetections = pageAnnotationsCache.get(currentPage) || detections.filter(d => d.pageNumber === currentPage);
     pageDetections.forEach(det => {
       const box = det.boundingBox;
       if (box) {
-        // Normalize bounding box values to draw them correctly on screen
-        let drawX = box.x;
-        let drawY = box.y;
-        let drawW = box.width;
-        let drawH = box.height;
+        // Normalize bounding box values and scale if canvas dimensions differ
+        let scaleX = (box.canvasWidth && box.canvasWidth > 0) ? (this.canvas.width / box.canvasWidth) : 1;
+        let scaleY = (box.canvasHeight && box.canvasHeight > 0) ? (this.canvas.height / box.canvasHeight) : 1;
+
+        let drawX = box.x * scaleX;
+        let drawY = box.y * scaleY;
+        let drawW = box.width * scaleX;
+        let drawH = box.height * scaleY;
 
         if (drawW < 0) {
           drawX = drawX + drawW;
@@ -388,17 +549,43 @@ class CanvasRenderer {
 
     // 3. Draw Active User Drag Selection Box (Snipping Tool Style)
     if (isDrawing && selectionRect && selectionRect.width !== undefined && selectionRect.height !== undefined) {
-      this.ctx.strokeStyle = '#ef4444'; // Dashed red border
-      this.ctx.lineWidth = 1.5;
-      this.ctx.setLineDash([5, 4]); // Dashed line pattern
-      
-      // Transparent red fill
-      this.ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';
-      
-      this.ctx.fillRect(startX, startY, selectionRect.width, selectionRect.height);
-      this.ctx.strokeRect(startX, startY, selectionRect.width, selectionRect.height);
-      
-      this.ctx.setLineDash([]); // Reset line dash
+      const activeColor = getSelectedAttributeColorHex();
+      let drawX = startX;
+      let drawY = startY;
+      let drawW = selectionRect.width;
+      let drawH = selectionRect.height;
+      if (drawW < 0) {
+        drawX = drawX + drawW;
+        drawW = -drawW;
+      }
+      if (drawH < 0) {
+        drawY = drawY + drawH;
+        drawH = -drawH;
+      }
+
+      this.ctx.strokeStyle = activeColor;
+      this.ctx.lineWidth = 1.6;
+      this.ctx.setLineDash([6, 4]);
+      this.ctx.fillStyle = getColorWithAlpha(activeColor, 0.2);
+      this.ctx.fillRect(drawX, drawY, drawW, drawH);
+      this.ctx.strokeRect(drawX, drawY, drawW, drawH);
+      drawSelectionHandles(this.ctx, drawX, drawY, drawW, drawH, activeColor);
+
+      if (typeof selectionRect.currentX === 'number' && typeof selectionRect.currentY === 'number') {
+        this.ctx.save();
+        this.ctx.strokeStyle = activeColor;
+        this.ctx.lineWidth = 1;
+        this.ctx.setLineDash([3, 3]);
+        this.ctx.beginPath();
+        this.ctx.moveTo(selectionRect.currentX, 0);
+        this.ctx.lineTo(selectionRect.currentX, this.canvas.height);
+        this.ctx.moveTo(0, selectionRect.currentY);
+        this.ctx.lineTo(this.canvas.width, selectionRect.currentY);
+        this.ctx.stroke();
+        this.ctx.restore();
+      }
+
+      this.ctx.setLineDash([]);
     }
   }
 }
@@ -430,7 +617,9 @@ class SelectionService {
         x: startX,
         y: startY,
         width: 0,
-        height: 0
+        height: 0,
+        currentX: startX,
+        currentY: startY
       };
     });
 
@@ -444,7 +633,8 @@ class SelectionService {
       const currentX = (e.clientX - rect.left) * scaleX;
       const currentY = (e.clientY - rect.top) * scaleY;
 
-      // Follow ONLY the mouse cursor
+      selectionRect.currentX = currentX;
+      selectionRect.currentY = currentY;
       selectionRect.width = currentX - startX;
       selectionRect.height = currentY - startY;
 
@@ -509,7 +699,7 @@ class SelectionService {
         }
       }
 
-      const colorHex = COLOR_MAP[selectedAttribute.color] || '#EF4444';
+      const colorHex = getSelectedAttributeColorHex();
       const payload = {
         attribute: selectedAttribute.name,
         color: colorHex,
@@ -521,7 +711,9 @@ class SelectionService {
           x: Math.round(normX),
           y: Math.round(normY),
           width: Math.round(normW),
-          height: Math.round(normH)
+          height: Math.round(normH),
+          canvasWidth: canvas.width,
+          canvasHeight: canvas.height
         }
       };
 
@@ -537,8 +729,10 @@ class SelectionService {
 
         if (response.ok) {
           const savedData = await response.json();
-          showToast('OCR Completed Successfully. Confidence: ' + savedData.confidence.toFixed(1) + '%', 'success');
+          const confStr = typeof savedData.confidence === 'number' ? savedData.confidence.toFixed(1) : '0.0';
+          showToast('✓ OCR Success. Confidence: ' + confStr + '%', 'success');
           await refreshDetections();
+          await loadPageAnnotations(currentPage);
         } else {
           showToast('Failed to save tag', 'error');
         }
@@ -572,6 +766,31 @@ function setupCanvasListeners() {
   if (!selectionService) {
     selectionService = new SelectionService(canvas, canvasRenderer);
     selectionService.init();
+  }
+}
+
+// Attach page control events (prev/next)
+function setupPageControls() {
+  const prevBtn = document.getElementById('prev-page-btn');
+  const nextBtn = document.getElementById('next-page-btn');
+  const pageControls = document.getElementById('page-controls');
+
+  if (prevBtn) {
+    prevBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      changePage(-1);
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      changePage(1);
+    });
+  }
+
+  // Ensure visibility state is correct
+  if (pageControls) {
+    pageControls.style.display = (currentFile && currentFile.fileType === 'PDF' && totalPages > 1) ? 'flex' : 'none';
   }
 }
 
@@ -621,12 +840,10 @@ function renderAttributesList() {
 
     item.onclick = () => {
       selectedAttribute = attr;
-      // Re-render selection outline
       document.querySelectorAll('.attr-item').forEach(el => el.classList.remove('active'));
       item.classList.add('active');
+      applySelectionCursor();
       redrawCanvas();
-      // Set cursor to crosshair for selection
-      canvas.style.cursor = 'crosshair';
     };
 
     container.appendChild(item);
@@ -646,7 +863,7 @@ async function deleteAttribute(id, event) {
     if (res.ok) {
       if (selectedAttribute && selectedAttribute.id === id) {
         selectedAttribute = null;
-        canvas.style.cursor = 'default';
+        applySelectionCursor();
       }
       await refreshDetections(); // Purges associated boxes as well
       await refreshAttributes();
@@ -756,6 +973,9 @@ function renderProjectFilesList() {
       currentFile = file;
       currentPage = 1;
       totalPages = file.pageCount;
+      resetAnnotationState();
+      restorePageAnnotations();
+      resetPdfViewerState();
       
       // Update page indicators
       const pageControls = document.getElementById('page-controls');
@@ -818,32 +1038,51 @@ function setupAddFileInput() {
   if (addFileInput) {
     addFileInput.addEventListener('change', async () => {
       if (addFileInput.files.length === 0) return;
-      
-      showToast('Uploading files...', 'success');
+
+      const helpText = document.getElementById('workspace-help-text');
+      if (helpText) {
+        helpText.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="margin-right: 6px;"></i> Uploading files...';
+      }
+
       const formData = new FormData();
       for (let i = 0; i < addFileInput.files.length; i++) {
         formData.append('file', addFileInput.files[i]);
       }
-      formData.append('managerEmail', localStorage.getItem('manager_email') || 'manager@app.com');
 
-      try {
-        const response = await fetch(`/api/projects/${currentProject.id}/files`, {
-          method: 'POST',
-          body: formData
-        });
+      const managerEmail = encodeURIComponent(localStorage.getItem('manager_email') || 'manager@app.com');
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/projects/${currentProject.id}/files?managerEmail=${managerEmail}`);
 
-        if (response.ok) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && helpText) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          helpText.innerHTML = `<i class="fa-solid fa-cloud-arrow-up" style="margin-right: 6px;"></i> Uploading files... ${percent}%`;
+        }
+      };
+
+      xhr.onload = async () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
           showToast('Files uploaded successfully', 'success');
           addFileInput.value = '';
+          if (helpText) {
+            helpText.innerHTML = '<i class="fa-solid fa-mouse-pointer" style="margin-right: 6px;"></i> Select an active attribute, then click and drag to draw a selection rectangle. OCR will run on the selected area.';
+          }
           await refreshProjectFiles();
         } else {
-          const data = await response.json();
-          showToast(data.error || 'Failed to upload files', 'error');
+          try {
+            const data = JSON.parse(xhr.responseText);
+            showToast(data.error || 'Failed to upload files', 'error');
+          } catch (e) {
+            showToast('Failed to upload files', 'error');
+          }
         }
-      } catch (err) {
-        console.error(err);
+      };
+
+      xhr.onerror = () => {
         showToast('Error uploading files', 'error');
-      }
+      };
+
+      xhr.send(formData);
     });
   }
 }
@@ -853,6 +1092,7 @@ async function refreshDetections() {
   try {
     if (!currentFile) {
       detections = [];
+      resetAnnotationState();
       renderDetectionsTable();
       renderSummaryPanel();
       redrawCanvas();
@@ -863,6 +1103,15 @@ async function refreshDetections() {
     if (!res.ok) throw new Error();
     detections = await res.json();
 
+    pageAnnotationsCache = new Map();
+    detections.forEach(det => {
+      const pageNumber = det.pageNumber || 1;
+      const pageDetections = pageAnnotationsCache.get(pageNumber) || [];
+      pageDetections.push(det);
+      pageAnnotationsCache.set(pageNumber, pageDetections);
+    });
+    persistPageAnnotations();
+
     renderDetectionsTable();
     renderSummaryPanel();
 
@@ -872,6 +1121,26 @@ async function refreshDetections() {
 
     redrawCanvas();
     refreshDebugImages();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function loadPageAnnotations(pageNumber = currentPage) {
+  if (!currentFile || !currentProject) return;
+
+  try {
+    const res = await fetch(`/api/projects/${currentProject.id}/files/${currentFile.id}/pages/${pageNumber}/detections`);
+    if (!res.ok) throw new Error();
+    const pageDetections = await res.json();
+
+    pageAnnotationsCache.set(pageNumber, pageDetections);
+    persistPageAnnotations();
+
+    if (currentPage === pageNumber) {
+      renderDetectionsTable();
+      redrawCanvas();
+    }
   } catch (e) {
     console.error(e);
   }
@@ -899,7 +1168,7 @@ function renderDetectionsTable() {
   const empty = document.getElementById('detections-empty-state');
   tbody.innerHTML = '';
 
-  const pageDetections = detections.filter(d => d.pageNumber === currentPage);
+  const pageDetections = (pageAnnotationsCache.get(currentPage) || detections.filter(d => d.pageNumber === currentPage));
 
   if (pageDetections.length === 0) {
     empty.style.display = 'block';
@@ -910,12 +1179,22 @@ function renderDetectionsTable() {
 
   pageDetections.forEach(det => {
     const row = document.createElement('tr');
+    const confVal = typeof det.confidence === 'number' ? det.confidence.toFixed(1) : '0.0';
+    const box = det.boundingBox || { x: 0, y: 0, width: 0, height: 0 };
+    const bboxText = `x:${box.x}, y:${box.y}, w:${box.width}, h:${box.height}`;
+    const textStr = det.detectedText ? det.detectedText : 'OCR Failed';
 
     row.innerHTML = `
       <td>
-        <span style="font-weight: 500;">${escapeHtml(det.attribute)}</span>
-        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px; font-family: monospace; white-space: pre-wrap; word-break: break-all;">${escapeHtml(det.detectedText || '')}</div>
-        <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">${det.elementType}</div>
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-weight: 600; font-size: 13px;">${escapeHtml(det.attribute)}</span>
+          <span class="badge" style="background-color: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #10b981; font-size: 10px;">${confVal}%</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px; font-family: monospace; white-space: pre-wrap; word-break: break-all; max-height: 80px; overflow-y: auto; background: rgba(15, 23, 42, 0.5); padding: 4px 6px; border-radius: 4px;">${escapeHtml(textStr)}</div>
+        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px; display: flex; justify-content: space-between;">
+          <span>Pg ${det.pageNumber || 1}</span>
+          <span style="font-family: monospace;">${bboxText}</span>
+        </div>
       </td>
       <td>
         <div style="display: flex; align-items: center; gap: 6px;">
@@ -924,7 +1203,7 @@ function renderDetectionsTable() {
         </div>
       </td>
       <td style="text-align: center;">
-        <button class="btn btn-secondary" onclick="deleteDetection('${det.id}')" style="padding: 4px 8px; background: none; border: none; color: var(--danger);">
+        <button class="btn btn-secondary" onclick="deleteDetection('${det.id}')" style="padding: 4px 8px; background: none; border: none; color: var(--danger);" title="Delete Tag">
           <i class="fa-regular fa-trash-can"></i>
         </button>
       </td>
@@ -1040,6 +1319,7 @@ function changePage(direction) {
 
   currentPage = targetPage;
   updatePageIndicator();
+  loadPageAnnotations(currentPage);
   loadWorkspaceImage();
 }
 

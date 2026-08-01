@@ -4,12 +4,8 @@ import com.lowagie.text.*;
 import com.lowagie.text.Font;
 import com.lowagie.text.Image;
 import com.lowagie.text.Paragraph;
+import com.lowagie.text.pdf.*;
 import com.lowagie.text.pdf.draw.LineSeparator;
-import com.lowagie.text.pdf.PdfPTable;
-import com.lowagie.text.pdf.PdfPCell;
-import com.lowagie.text.pdf.PdfWriter;
-import com.lowagie.text.pdf.PdfPageEventHelper;
-import com.lowagie.text.pdf.PdfContentByte;
 import com.smartui.analysis.model.Project;
 import com.smartui.analysis.model.ProjectFile;
 import com.smartui.analysis.model.Detection;
@@ -35,17 +31,19 @@ public class PDFReportService {
 
     private final OcrService ocrService;
     private final ProjectFileRepository projectFileRepository;
+    private final PDFRenderService pdfRenderService;
 
-    public PDFReportService(OcrService ocrService, ProjectFileRepository projectFileRepository) {
+    public PDFReportService(OcrService ocrService, ProjectFileRepository projectFileRepository, PDFRenderService pdfRenderService) {
         this.ocrService = ocrService;
         this.projectFileRepository = projectFileRepository;
+        this.pdfRenderService = pdfRenderService;
     }
 
     private static final Map<String, String> HEX_TO_COLOR_NAME_MAP = Map.ofEntries(
             Map.entry("#ef4444", "Red"),
             Map.entry("#3b82f6", "Blue"),
             Map.entry("#10b981", "Green"),
-            Map.entry("#22c55e", "Green"), // Supporting multiple shades
+            Map.entry("#22c55e", "Green"),
             Map.entry("#eab308", "Yellow"),
             Map.entry("#d946ef", "Magenta"),
             Map.entry("#06b6d4", "Cyan"),
@@ -53,90 +51,112 @@ public class PDFReportService {
             Map.entry("#6366f1", "Indigo")
     );
 
-    public static class HeaderFooterPageEvent extends PdfPageEventHelper {
+    /**
+     * Enterprise Two-Pass Page Event Helper for headers, footers, and dynamic 'Page X of Y' page numbers.
+     */
+    public static class EnterpriseHeaderFooterPageEvent extends PdfPageEventHelper {
+        private PdfTemplate totalPagesTemplate;
+        private BaseFont baseFont;
         private final Font font;
 
-        public HeaderFooterPageEvent() {
+        public EnterpriseHeaderFooterPageEvent() {
             this.font = FontFactory.getFont(FontFactory.HELVETICA, 8, new Color(148, 163, 184));
         }
 
         @Override
+        public void onOpenDocument(PdfWriter writer, Document document) {
+            totalPagesTemplate = writer.getDirectContent().createTemplate(30, 16);
+            try {
+                baseFont = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.NOT_EMBEDDED);
+            } catch (Exception e) {
+                System.err.println("Error initializing BaseFont: " + e.getMessage());
+            }
+        }
+
+        @Override
         public void onEndPage(PdfWriter writer, Document document) {
+            PdfContentByte cb = writer.getDirectContent();
             float x = document.leftMargin();
             float width = document.getPageSize().getWidth() - document.leftMargin() - document.rightMargin();
 
-            // Header
+            // 1. Enterprise Header
             PdfPTable header = new PdfPTable(2);
             try {
-                header.setWidths(new float[]{1f, 1f});
+                header.setWidths(new float[]{1.5f, 1f});
                 header.setTotalWidth(width);
                 header.setLockedWidth(true);
                 header.getDefaultCell().setBorder(Rectangle.NO_BORDER);
                 header.getDefaultCell().setPadding(0);
 
-                PdfPCell leftCell = new PdfPCell(new Phrase("Smart UI Analysis Report", font));
+                PdfPCell leftCell = new PdfPCell(new Phrase("Smart UI Analysis Report | Enterprise Edition", font));
                 leftCell.setBorder(Rectangle.NO_BORDER);
                 leftCell.setHorizontalAlignment(Element.ALIGN_LEFT);
-                leftCell.setPadding(0);
                 header.addCell(leftCell);
 
-                PdfPCell rightCell = new PdfPCell(new Phrase("CONFIDENTIAL", font));
+                PdfPCell rightCell = new PdfPCell(new Phrase("CONFIDENTIAL & PROPRIETARY", font));
                 rightCell.setBorder(Rectangle.NO_BORDER);
                 rightCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
-                rightCell.setPadding(0);
                 header.addCell(rightCell);
 
-                float y = document.getPageSize().getHeight() - document.topMargin() + 15;
-                header.writeSelectedRows(0, -1, x, y, writer.getDirectContent());
+                float yHeader = document.getPageSize().getHeight() - document.topMargin() + 15;
+                header.writeSelectedRows(0, -1, x, yHeader, cb);
 
-                // Subtle gray separator line
-                PdfContentByte cb = writer.getDirectContent();
                 cb.setColorStroke(new Color(226, 232, 240));
                 cb.setLineWidth(0.5f);
-                cb.moveTo(x, y - 5);
-                cb.lineTo(document.getPageSize().getWidth() - document.rightMargin(), y - 5);
+                cb.moveTo(x, yHeader - 5);
+                cb.lineTo(document.getPageSize().getWidth() - document.rightMargin(), yHeader - 5);
                 cb.stroke();
 
             } catch (Exception e) {
-                System.err.println("Error rendering PDF header page event: " + e.getMessage());
+                System.err.println("Error rendering PDF header: " + e.getMessage());
             }
 
-            // Footer
-            PdfPTable footer = new PdfPTable(2);
+            // 2. Enterprise Footer with Page X of Y
             try {
-                footer.setWidths(new float[]{1f, 1f});
-                footer.setTotalWidth(width);
-                footer.setLockedWidth(true);
-                footer.getDefaultCell().setBorder(Rectangle.NO_BORDER);
-                footer.getDefaultCell().setPadding(0);
+                float yFooter = document.bottomMargin() - 15;
 
-                String generatedTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
-                PdfPCell leftCell = new PdfPCell(new Phrase("Generated on " + generatedTime, font));
-                leftCell.setBorder(Rectangle.NO_BORDER);
-                leftCell.setHorizontalAlignment(Element.ALIGN_LEFT);
-                leftCell.setPadding(0);
-                footer.addCell(leftCell);
-
-                PdfPCell rightCell = new PdfPCell(new Phrase("Page " + writer.getPageNumber(), font));
-                rightCell.setBorder(Rectangle.NO_BORDER);
-                rightCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
-                rightCell.setPadding(0);
-                footer.addCell(rightCell);
-
-                float y = document.bottomMargin() - 15;
-
-                // Subtle gray separator line
-                PdfContentByte cb = writer.getDirectContent();
                 cb.setColorStroke(new Color(226, 232, 240));
                 cb.setLineWidth(0.5f);
-                cb.moveTo(x, y + 10);
-                cb.lineTo(document.getPageSize().getWidth() - document.rightMargin(), y + 10);
+                cb.moveTo(x, yFooter + 10);
+                cb.lineTo(document.getPageSize().getWidth() - document.rightMargin(), yFooter + 10);
                 cb.stroke();
 
-                footer.writeSelectedRows(0, -1, x, y, writer.getDirectContent());
+                String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                cb.beginText();
+                cb.setFontAndSize(baseFont != null ? baseFont : BaseFont.createFont(), 8);
+                cb.setColorFill(new Color(148, 163, 184));
+                cb.setTextMatrix(x, yFooter);
+                cb.showText("Generated on " + timestamp);
+                cb.endText();
+
+                String pageText = "Page " + writer.getPageNumber() + " of ";
+                float textWidth = baseFont != null ? baseFont.getWidthPoint(pageText, 8) : 45f;
+                float pageX = document.getPageSize().getWidth() - document.rightMargin() - textWidth - 15;
+
+                cb.beginText();
+                cb.setFontAndSize(baseFont != null ? baseFont : BaseFont.createFont(), 8);
+                cb.setColorFill(new Color(148, 163, 184));
+                cb.setTextMatrix(pageX, yFooter);
+                cb.showText(pageText);
+                cb.endText();
+
+                if (totalPagesTemplate != null) {
+                    cb.addTemplate(totalPagesTemplate, pageX + textWidth, yFooter);
+                }
 
             } catch (Exception e) {
-                System.err.println("Error rendering PDF footer page event: " + e.getMessage());
+                System.err.println("Error rendering PDF footer: " + e.getMessage());
+            }
+        }
+
+        @Override
+        public void onCloseDocument(PdfWriter writer, Document document) {
+            if (totalPagesTemplate != null && baseFont != null) {
+                totalPagesTemplate.beginText();
+                totalPagesTemplate.setFontAndSize(baseFont, 8);
+                totalPagesTemplate.setColorFill(new Color(148, 163, 184));
+                totalPagesTemplate.showText(String.valueOf(writer.getPageNumber()));
+                totalPagesTemplate.endText();
             }
         }
     }
@@ -147,94 +167,140 @@ public class PDFReportService {
 
         try {
             PdfWriter writer = PdfWriter.getInstance(document, out);
-            writer.setPageEvent(new HeaderFooterPageEvent());
+            writer.setPageEvent(new EnterpriseHeaderFooterPageEvent());
             document.open();
 
-            // Font configurations
+            // Corporate Font System
             Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, new Color(15, 23, 42)); // Slate-900
-            Font sectionFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 15, new Color(30, 41, 59)); // Slate-800
-            Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, new Color(71, 85, 105)); // Slate-600
-            Font valueFont = FontFactory.getFont(FontFactory.HELVETICA, 10, new Color(15, 23, 42)); // Slate-900
-            Font tableHeaderFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE);
-            Font tableCellFont = FontFactory.getFont(FontFactory.HELVETICA, 10, new Color(15, 23, 42));
+            Font sectionFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new Color(30, 41, 59)); // Slate-800
+            Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, new Color(71, 85, 105)); // Slate-600
+            Font valueFont = FontFactory.getFont(FontFactory.HELVETICA, 9, new Color(15, 23, 42)); // Slate-900
+            Font tableHeaderFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, Color.WHITE);
+            Font tableCellFont = FontFactory.getFont(FontFactory.HELVETICA, 9, new Color(15, 23, 42));
 
-            // Title
-            Paragraph title = new Paragraph("Smart UI Analysis Report", titleFont);
-            title.setSpacingAfter(15);
+            // Title Header
+            Paragraph title = new Paragraph("Smart UI Analysis & OCR Report", titleFont);
+            title.setSpacingAfter(12);
             document.add(title);
 
-            // Divider Line
-            LineSeparator titleSeparator = new LineSeparator(1.5f, 100, new Color(37, 99, 235), Element.ALIGN_LEFT, -10);
+            // Corporate Divider Line
+            LineSeparator titleSeparator = new LineSeparator(1.5f, 100, new Color(37, 99, 235), Element.ALIGN_LEFT, -8);
             document.add(new Chunk(titleSeparator));
 
             Paragraph spacing = new Paragraph(" ");
-            spacing.setSpacingAfter(5);
+            spacing.setSpacingAfter(4);
             document.add(spacing);
 
-            // Grid layout table for metadata (4 columns)
+            // 1. Executive Summary Section
+            Paragraph execTitle = new Paragraph("Executive Summary", sectionFont);
+            execTitle.setSpacingAfter(8);
+            document.add(execTitle);
+
+            // Fetch active project files count & total pages
+            List<ProjectFile> activeFiles = projectFileRepository.findByProjectIdAndIsDeleted(project.getId(), false);
+            int totalPdfPages = activeFiles.stream().mapToInt(ProjectFile::getPageCount).sum();
+            Set<Integer> pagesWithDetectionsSet = detections.stream().map(Detection::getPageNumber).collect(Collectors.toSet());
+            int pagesProcessedCount = pagesWithDetectionsSet.size();
+
+            double totalConfidence = 0.0;
+            long totalProcessingMs = 0;
+            int totalElements = detections.size();
+            for (Detection det : detections) {
+                if (det.getConfidence() != null) totalConfidence += det.getConfidence();
+                if (det.getProcessingTimeMs() != null) totalProcessingMs += det.getProcessingTimeMs();
+            }
+            double ocrAccuracy = totalElements > 0 ? (totalConfidence / totalElements) : 0.0;
+
+            Map<String, List<Detection>> groupedByAttr = detections.stream()
+                    .collect(Collectors.groupingBy(Detection::getAttribute));
+            int totalAttributes = groupedByAttr.size();
+
             PdfPTable metaTable = new PdfPTable(4);
             metaTable.setWidthPercentage(100);
             metaTable.setWidths(new float[]{1.8f, 3.2f, 1.8f, 3.2f});
-            metaTable.setSpacingAfter(20);
+            metaTable.setSpacingAfter(15);
 
-            double totalConfidence = 0;
-            int ocrCount = 0;
-            for (Detection det : detections) {
-                if (det.getConfidence() != null && det.getConfidence() > 0) {
-                    totalConfidence += det.getConfidence();
-                    ocrCount++;
-                }
-            }
-            double ocrAccuracy = ocrCount > 0 ? (totalConfidence / ocrCount) : 0.0;
-
-            Map<String, List<Detection>> grouped = detections.stream()
-                    .collect(Collectors.groupingBy(Detection::getAttribute));
-            int totalAttributes = grouped.size();
-
-            // Fetch active project files count
-            List<ProjectFile> activeFiles = projectFileRepository.findByProjectIdAndIsDeleted(project.getId(), false);
+            String reportId = "RPT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+            String fileName = activeFiles.size() > 0 ? activeFiles.get(0).getOriginalFileName() : "N/A";
+            String fileType = activeFiles.size() > 0 ? activeFiles.get(0).getFileType() : "N/A";
 
             addMetaCell(metaTable, "Project Name:", project.getName() != null ? project.getName() : "Unknown", labelFont, valueFont);
-            addMetaCell(metaTable, "Project ID:", project.getCustomProjectId() != null ? project.getCustomProjectId() : project.getId(), labelFont, valueFont);
-            addMetaCell(metaTable, "Uploaded File Name:", activeFiles.size() > 0 ? activeFiles.get(0).getOriginalFileName() : "N/A", labelFont, valueFont);
-            addMetaCell(metaTable, "File Type:", activeFiles.size() > 0 ? activeFiles.get(0).getFileType() : "N/A", labelFont, valueFont);
-            addMetaCell(metaTable, "Upload Date:", project.getUploadDate() != null ? project.getUploadDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) : "Unknown", labelFont, valueFont);
+            addMetaCell(metaTable, "Report ID:", reportId, labelFont, valueFont);
+            addMetaCell(metaTable, "Manager/User:", project.getManagerEmail() != null ? project.getManagerEmail() : "manager@app.com", labelFont, valueFont);
             addMetaCell(metaTable, "Generated Date:", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")), labelFont, valueFont);
-            addMetaCell(metaTable, "Manager:", project.getManagerEmail() != null ? project.getManagerEmail() : "manager@app.com", labelFont, valueFont);
+            addMetaCell(metaTable, "File Name:", fileName, labelFont, valueFont);
+            addMetaCell(metaTable, "File Type:", fileType, labelFont, valueFont);
+            addMetaCell(metaTable, "Total PDF Pages:", String.valueOf(totalPdfPages), labelFont, valueFont);
+            addMetaCell(metaTable, "Pages Analyzed:", String.valueOf(pagesProcessedCount), labelFont, valueFont);
+            addMetaCell(metaTable, "Total OCR Regions:", String.valueOf(totalElements), labelFont, valueFont);
             addMetaCell(metaTable, "Total Attributes:", String.valueOf(totalAttributes), labelFont, valueFont);
-            addMetaCell(metaTable, "Total Selected Elements:", String.valueOf(detections.size()), labelFont, valueFont);
-            addMetaCell(metaTable, "OCR Accuracy:", String.format("%.1f%%", ocrAccuracy), labelFont, valueFont);
+            addMetaCell(metaTable, "Avg OCR Accuracy:", String.format("%.2f%%", ocrAccuracy), labelFont, valueFont);
+            addMetaCell(metaTable, "Total Duration:", totalProcessingMs + " ms", labelFont, valueFont);
 
             document.add(metaTable);
 
-            // Attribute Summary Section
-            Paragraph summaryTitle = new Paragraph("Attribute Summary", sectionFont);
-            summaryTitle.setSpacingAfter(10);
-            document.add(summaryTitle);
+            // 2. Attribute Summary Section
+            Paragraph attrTitle = new Paragraph("Attribute Breakdown Summary", sectionFont);
+            attrTitle.setSpacingAfter(8);
+            document.add(attrTitle);
 
-            PdfPTable summaryTable = new PdfPTable(3);
+            PdfPTable summaryTable = new PdfPTable(4);
             summaryTable.setWidthPercentage(100);
-            summaryTable.setWidths(new float[]{40f, 30f, 30f});
-            summaryTable.setSpacingAfter(20);
+            summaryTable.setWidths(new float[]{35f, 25f, 20f, 20f});
+            summaryTable.setSpacingAfter(15);
 
             addHeaderCell(summaryTable, "Attribute", tableHeaderFont);
-            addHeaderCell(summaryTable, "Color", tableHeaderFont);
+            addHeaderCell(summaryTable, "Color Key", tableHeaderFont);
             addHeaderCell(summaryTable, "Elements", tableHeaderFont);
+            addHeaderCell(summaryTable, "Avg Confidence", tableHeaderFont);
 
-            for (Map.Entry<String, List<Detection>> entry : grouped.entrySet()) {
+            for (Map.Entry<String, List<Detection>> entry : groupedByAttr.entrySet()) {
                 String attrName = entry.getKey();
                 List<Detection> attrDetections = entry.getValue();
                 String colorHex = attrDetections.get(0).getColor();
+                double avgConf = attrDetections.stream().mapToDouble(d -> d.getConfidence() != null ? d.getConfidence() : 0.0).average().orElse(0.0);
 
                 addTableCell(summaryTable, attrName, tableCellFont);
                 addTableCell(summaryTable, getColorName(colorHex), tableCellFont);
                 addTableCell(summaryTable, String.valueOf(attrDetections.size()), tableCellFont);
+                addTableCell(summaryTable, String.format("%.2f%%", avgConf), tableCellFont);
             }
             document.add(summaryTable);
 
-            // Mapping each detection to its number in its attribute group for annotation labeling
+            // 3. Page Summary Section
+            Paragraph pageSummaryTitle = new Paragraph("Page-by-Page Summary", sectionFont);
+            pageSummaryTitle.setSpacingAfter(8);
+            document.add(pageSummaryTitle);
+
+            Map<Integer, List<Detection>> groupedByPage = detections.stream()
+                    .collect(Collectors.groupingBy(Detection::getPageNumber, TreeMap::new, Collectors.toList()));
+
+            PdfPTable pageSummaryTable = new PdfPTable(4);
+            pageSummaryTable.setWidthPercentage(100);
+            pageSummaryTable.setWidths(new float[]{20f, 25f, 30f, 25f});
+            pageSummaryTable.setSpacingAfter(20);
+
+            addHeaderCell(pageSummaryTable, "Page Number", tableHeaderFont);
+            addHeaderCell(pageSummaryTable, "OCR Regions", tableHeaderFont);
+            addHeaderCell(pageSummaryTable, "Page Avg Confidence", tableHeaderFont);
+            addHeaderCell(pageSummaryTable, "Processing Time", tableHeaderFont);
+
+            for (Map.Entry<Integer, List<Detection>> entry : groupedByPage.entrySet()) {
+                int pageNum = entry.getKey();
+                List<Detection> pageDets = entry.getValue();
+                double pAvgConf = pageDets.stream().mapToDouble(d -> d.getConfidence() != null ? d.getConfidence() : 0.0).average().orElse(0.0);
+                long pTotalMs = pageDets.stream().mapToLong(d -> d.getProcessingTimeMs() != null ? d.getProcessingTimeMs() : 0L).sum();
+
+                addTableCell(pageSummaryTable, "Page " + pageNum, tableCellFont);
+                addTableCell(pageSummaryTable, String.valueOf(pageDets.size()), tableCellFont);
+                addTableCell(pageSummaryTable, String.format("%.2f%%", pAvgConf), tableCellFont);
+                addTableCell(pageSummaryTable, pTotalMs + " ms", tableCellFont);
+            }
+            document.add(pageSummaryTable);
+
+            // Mapping each detection to its number in its attribute group for labeling
             Map<String, Integer> detectionToNumberMap = new java.util.HashMap<>();
-            for (Map.Entry<String, List<Detection>> entry : grouped.entrySet()) {
+            for (Map.Entry<String, List<Detection>> entry : groupedByAttr.entrySet()) {
                 List<Detection> attrDetections = entry.getValue();
                 int num = 1;
                 for (Detection det : attrDetections) {
@@ -477,18 +543,31 @@ public class PDFReportService {
     private Detection.BoundingBox getScaledBox(Detection.BoundingBox box, BufferedImage originalImage, String uploadType) {
         if (box == null || originalImage == null) return box;
 
-        float scale;
-        if ("PDF".equalsIgnoreCase(uploadType)) {
-            scale = 0.72f;
+        double scaleX;
+        double scaleY;
+
+        if (box.getCanvasWidth() != null && box.getCanvasWidth() > 0 &&
+            box.getCanvasHeight() != null && box.getCanvasHeight() > 0) {
+            scaleX = (double) originalImage.getWidth() / box.getCanvasWidth();
+            scaleY = (double) originalImage.getHeight() / box.getCanvasHeight();
         } else {
-            scale = Math.min(1.0f, 800f / originalImage.getWidth());
+            if ("PDF".equalsIgnoreCase(uploadType)) {
+                scaleX = 1.25; // 180 DPI / 144 DPI
+                scaleY = 1.25;
+            } else {
+                double s = Math.max(1.0, (double) originalImage.getWidth() / 800.0);
+                scaleX = s;
+                scaleY = s;
+            }
         }
 
         Detection.BoundingBox scaledBox = new Detection.BoundingBox();
-        scaledBox.setX(Math.round(box.getX() / scale));
-        scaledBox.setY(Math.round(box.getY() / scale));
-        scaledBox.setWidth(Math.round(box.getWidth() / scale));
-        scaledBox.setHeight(Math.round(box.getHeight() / scale));
+        scaledBox.setX((int) Math.round(box.getX() * scaleX));
+        scaledBox.setY((int) Math.round(box.getY() * scaleY));
+        scaledBox.setWidth((int) Math.round(box.getWidth() * scaleX));
+        scaledBox.setHeight((int) Math.round(box.getHeight() * scaleY));
+        scaledBox.setCanvasWidth(originalImage.getWidth());
+        scaledBox.setCanvasHeight(originalImage.getHeight());
         return scaledBox;
     }
 
@@ -570,9 +649,28 @@ public class PDFReportService {
     }
 
     private PdfPTable createElementCardTable(Detection det, BufferedImage baseImage, int index, Font labelFont, Font valueFont, Document document, String uploadType) {
-        if (baseImage == null || det.getBoundingBox() == null) {
-            return null;
-        }
+        // Debug Logging before PDF element card generation (Requirement 6)
+        String rawOcrText = det.getDetectedText();
+        double confidence = det.getConfidence() != null ? det.getConfidence() : 0.0;
+        String displayOcrText = (rawOcrText != null && !rawOcrText.trim().isEmpty()) ? rawOcrText : "OCR Failed";
+
+        System.out.println(String.format(
+            "%n=== DEBUG: PDF Generation Element #%d ===%n" +
+            "Element ID: %s%n" +
+            "Page: %d%n" +
+            "Attribute: %s | Color: %s%n" +
+            "Bounding Box: x=%d, y=%d, w=%d, h=%d%n" +
+            "Extracted Text: %s%n" +
+            "Confidence: %.1f%%%n" +
+            "Cropped Image Path: %s%n" +
+            "============================================",
+            index, det.getId(), det.getPageNumber(),
+            det.getAttribute(), getColorName(det.getColor()),
+            det.getBoundingBox().getX(), det.getBoundingBox().getY(), det.getBoundingBox().getWidth(), det.getBoundingBox().getHeight(),
+            displayOcrText,
+            confidence,
+            det.getCroppedImage() != null ? det.getCroppedImage() : "N/A"
+        ));
 
         BufferedImage croppedBimg;
         try {
@@ -653,22 +751,30 @@ public class PDFReportService {
         PdfPTable detailsGrid = new PdfPTable(2);
         detailsGrid.setWidthPercentage(100);
         try {
-            detailsGrid.setWidths(new float[]{3.5f, 6.5f});
+            detailsGrid.setWidths(new float[]{3.8f, 6.2f});
         } catch (Exception e) {}
 
         Font keyFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, new Color(71, 85, 105)); // Slate-600
         Font valFont = FontFactory.getFont(FontFactory.HELVETICA, 10, new Color(15, 23, 42)); // Slate-900
 
-        String ocrText = det.getDetectedText();
-        double confidence = det.getConfidence() != null ? det.getConfidence() : 0.0;
-        if (ocrText == null || ocrText.trim().isEmpty()) {
-            ocrText = "Unable to detect readable text.";
-            confidence = 0.0;
-        }
+        String bboxStr = String.format("x=%d, y=%d, w=%d, h=%d",
+                det.getBoundingBox().getX(), det.getBoundingBox().getY(),
+                det.getBoundingBox().getWidth(), det.getBoundingBox().getHeight());
 
         addGridRow(detailsGrid, "Attribute", det.getAttribute(), keyFont, valFont);
         addGridRow(detailsGrid, "Color", getColorName(det.getColor()), keyFont, valFont);
-        addGridRow(detailsGrid, "OCR Confidence", String.format("%.1f%%", confidence), keyFont, valFont);
+        addGridRow(detailsGrid, "Page Number", String.valueOf(det.getPageNumber()), keyFont, valFont);
+        addGridRow(detailsGrid, "Bounding Box", bboxStr, keyFont, valFont);
+        addGridRow(detailsGrid, "OCR Confidence", String.format("%.2f%%", confidence), keyFont, valFont);
+        if (det.getProcessingTimeMs() != null) {
+            addGridRow(detailsGrid, "Processing Time", det.getProcessingTimeMs() + " ms", keyFont, valFont);
+        }
+        if (det.getImageResolution() != null) {
+            addGridRow(detailsGrid, "Resolution", det.getImageResolution(), keyFont, valFont);
+        }
+        if (det.getOcrStatus() != null) {
+            addGridRow(detailsGrid, "OCR Status", det.getOcrStatus(), keyFont, valFont);
+        }
 
         detailsCell.addElement(detailsGrid);
 
@@ -677,7 +783,7 @@ public class PDFReportService {
         textHeader.setSpacingAfter(4);
         detailsCell.addElement(textHeader);
 
-        Paragraph textVal = new Paragraph(ocrText, valFont);
+        Paragraph textVal = new Paragraph(displayOcrText, valFont);
         textVal.setSpacingAfter(5);
         detailsCell.addElement(textVal);
 

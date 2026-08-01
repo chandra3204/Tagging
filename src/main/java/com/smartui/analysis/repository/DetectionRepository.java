@@ -11,5 +11,6 @@ public interface DetectionRepository extends JpaRepository<Detection, String> {
     List<Detection> findByProjectId(String projectId);
     void deleteByProjectId(String projectId);
     List<Detection> findByFileId(String fileId);
+    List<Detection> findByFileIdAndPageNumber(String fileId, int pageNumber);
     void deleteByFileId(String fileId);
 }

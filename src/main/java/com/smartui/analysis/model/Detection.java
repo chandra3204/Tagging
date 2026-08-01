@@ -37,6 +37,24 @@ public class Detection {
     @Column
     private Double confidence;
 
+    @Column
+    private String croppedImage;
+
+    @Column
+    private String preprocessedImage;
+
+    @Column
+    private Long processingTimeMs;
+
+    @Column
+    private String imageResolution;
+
+    @Column
+    private String ocrStatus; // SUCCESS, FAILED
+
+    @Column
+    private String ocrReason;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -47,6 +65,12 @@ public class Detection {
         private int width;
         private int height;
 
+        @Column(name = "canvas_width")
+        private Integer canvasWidth;
+
+        @Column(name = "canvas_height")
+        private Integer canvasHeight;
+
         public BoundingBox() {}
 
         public BoundingBox(int x, int y, int width, int height) {
@@ -54,6 +78,15 @@ public class Detection {
             this.y = y;
             this.width = width;
             this.height = height;
+        }
+
+        public BoundingBox(int x, int y, int width, int height, Integer canvasWidth, Integer canvasHeight) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.canvasWidth = canvasWidth;
+            this.canvasHeight = canvasHeight;
         }
 
         public int getX() {
@@ -86,6 +119,22 @@ public class Detection {
 
         public void setHeight(int height) {
             this.height = height;
+        }
+
+        public Integer getCanvasWidth() {
+            return canvasWidth;
+        }
+
+        public void setCanvasWidth(Integer canvasWidth) {
+            this.canvasWidth = canvasWidth;
+        }
+
+        public Integer getCanvasHeight() {
+            return canvasHeight;
+        }
+
+        public void setCanvasHeight(Integer canvasHeight) {
+            this.canvasHeight = canvasHeight;
         }
     }
 
@@ -181,6 +230,54 @@ public class Detection {
 
     public void setConfidence(Double confidence) {
         this.confidence = confidence;
+    }
+
+    public String getCroppedImage() {
+        return croppedImage;
+    }
+
+    public void setCroppedImage(String croppedImage) {
+        this.croppedImage = croppedImage;
+    }
+
+    public String getPreprocessedImage() {
+        return preprocessedImage;
+    }
+
+    public void setPreprocessedImage(String preprocessedImage) {
+        this.preprocessedImage = preprocessedImage;
+    }
+
+    public Long getProcessingTimeMs() {
+        return processingTimeMs;
+    }
+
+    public void setProcessingTimeMs(Long processingTimeMs) {
+        this.processingTimeMs = processingTimeMs;
+    }
+
+    public String getImageResolution() {
+        return imageResolution;
+    }
+
+    public void setImageResolution(String imageResolution) {
+        this.imageResolution = imageResolution;
+    }
+
+    public String getOcrStatus() {
+        return ocrStatus;
+    }
+
+    public void setOcrStatus(String ocrStatus) {
+        this.ocrStatus = ocrStatus;
+    }
+
+    public String getOcrReason() {
+        return ocrReason;
+    }
+
+    public void setOcrReason(String ocrReason) {
+        this.ocrReason = ocrReason;
     }
 
     @jakarta.persistence.Transient

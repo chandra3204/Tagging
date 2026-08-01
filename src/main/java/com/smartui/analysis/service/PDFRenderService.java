@@ -10,9 +10,55 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 @Service
 public class PDFRenderService {
+
+    private final ExecutorService renderExecutor = Executors.newFixedThreadPool(Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
+
+    /**
+     * Gets the page count of a PDF file without rendering pages.
+     */
+    public int getPdfPageCount(File pdfFile) throws IOException {
+        try (PDDocument document = PDDocument.load(pdfFile)) {
+            return document.getNumberOfPages();
+        }
+    }
+
+    /**
+     * Lazily renders a single page of a PDF file on demand.
+     * @param pageNumber 1-based page index.
+     */
+    public String renderSinglePage(File pdfFile, File uploadDir, String fileUuid, int pageNumber, String projectFolderRelativePath) throws IOException {
+        String pageFileName = fileUuid + "_page_" + pageNumber + ".png";
+        File outputFile = new File(uploadDir, pageFileName);
+
+        if (outputFile.exists() && outputFile.length() > 0) {
+            return projectFolderRelativePath + "/" + pageFileName;
+        }
+
+        synchronized (this) {
+            if (outputFile.exists() && outputFile.length() > 0) {
+                return projectFolderRelativePath + "/" + pageFileName;
+            }
+
+            try (PDDocument document = PDDocument.load(pdfFile)) {
+                int pageIndex = pageNumber - 1;
+                if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) {
+                    throw new IllegalArgumentException("Page number out of bounds: " + pageNumber);
+                }
+                PDFRenderer pdfRenderer = new PDFRenderer(document);
+                BufferedImage bim = pdfRenderer.renderImageWithDPI(pageIndex, 180);
+                ImageIO.write(bim, "PNG", outputFile);
+            }
+        }
+
+        return projectFolderRelativePath + "/" + pageFileName;
+    }
 
     /**
      * Converts a PDF file into individual page images (PNG format) and saves them in the project uploads folder.
@@ -25,22 +71,33 @@ public class PDFRenderService {
      */
     public List<String> renderPdfToImages(File pdfFile, File uploadDir, String fileUuid, String projectFolderRelativePath) throws IOException {
         List<String> imagePaths = new ArrayList<>();
-        
+
         try (PDDocument document = PDDocument.load(pdfFile)) {
-            PDFRenderer pdfRenderer = new PDFRenderer(document);
             int pageCount = document.getNumberOfPages();
-            
+            List<Future<String>> futures = new ArrayList<>();
+
             for (int i = 0; i < pageCount; i++) {
-                // Render page as high-resolution image (300 DPI for sharp screenshots and better OCR)
-                BufferedImage bim = pdfRenderer.renderImageWithDPI(i, 300);
-                String pageFileName = fileUuid + "_page_" + (i + 1) + ".png";
-                File outputFile = new File(uploadDir, pageFileName);
-                
-                ImageIO.write(bim, "PNG", outputFile);
-                imagePaths.add(projectFolderRelativePath + "/" + pageFileName);
+                final int pageNum = i + 1;
+                futures.add(renderExecutor.submit(() -> renderSinglePage(pdfFile, uploadDir, fileUuid, pageNum, projectFolderRelativePath)));
             }
+
+            for (int i = 0; i < futures.size(); i++) {
+                imagePaths.add(futures.get(i).get());
+            }
+        } catch (Exception e) {
+            throw new IOException("Failed to render PDF to images", e);
         }
-        
+
         return imagePaths;
+    }
+
+    public CompletableFuture<List<String>> renderPdfToImagesAsync(File pdfFile, File uploadDir, String fileUuid, String projectFolderRelativePath) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return renderPdfToImages(pdfFile, uploadDir, fileUuid, projectFolderRelativePath);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }, renderExecutor);
     }
 }
