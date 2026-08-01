@@ -6,6 +6,11 @@
   <title>Analysis Workspace - Smart UI Analysis</title>
   <link rel="stylesheet" href="css/styles.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script>
+    if (!localStorage.getItem('session_token')) {
+      window.location.href = 'index.html';
+    }
+  </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
 </head>
 <body>
@@ -25,6 +30,9 @@
       <span style="font-size: 13px; color: var(--text-secondary); background: var(--bg-tertiary); padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);">
         <i class="fa-solid fa-user-tie" style="margin-right: 6px;"></i><span id="manager-email">manager@app.com</span>
       </span>
+      <button class="btn btn-secondary" id="logout-btn" style="padding: 8px 14px; font-size: 13px;" title="Sign Out">
+        <i class="fa-solid fa-right-from-bracket"></i> Sign Out
+      </button>
       <button class="btn btn-primary glow-btn" id="pdf-report-btn" style="padding: 8px 16px; font-size: 13px;">
         <i class="fa-solid fa-file-pdf"></i> Generate PDF Report
       </button>

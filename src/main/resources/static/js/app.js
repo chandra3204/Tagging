@@ -166,8 +166,23 @@ function drawSelectionHandles(ctx, x, y, width, height, color) {
 
 // Initialise Workspace if on analysis page
 document.addEventListener('DOMContentLoaded', () => {
+  const managerEmail = localStorage.getItem('manager_email') || 'manager@app.com';
+  const managerEmailEl = document.getElementById('manager-email');
+  if (managerEmailEl) {
+    managerEmailEl.textContent = managerEmail;
+  }
+
+  const logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      localStorage.removeItem('session_token');
+      localStorage.removeItem('manager_email');
+      window.location.href = 'index.html';
+    });
+  }
+
   const projectId = getQueryParam('id');
-  if (projectId && document.getElementById('annotation-canvas')) {
+  if (projectId && document.getElementById('pages-scroll-wrapper')) {
     initWorkspace(projectId);
   }
 });
