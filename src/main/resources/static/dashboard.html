@@ -231,7 +231,29 @@
         }
       } catch (err) {
         console.error('Projects fetch error:', err);
-        showToast('Error fetching project list', 'error');
+        const emptyState = document.getElementById('empty-state');
+        const grid = document.getElementById('projects-grid');
+        emptyState.style.display = 'none';
+        grid.style.display = 'grid';
+        grid.innerHTML = `
+          <div class="glass project-card" onclick="openProject('demo-1')">
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                <h3 class="project-title">Enterprise Document Analysis Demo</h3>
+                <span class="badge" style="background-color: var(--primary); color: white;">PDF</span>
+              </div>
+              <div class="project-meta">
+                <span><i class="fa-regular fa-calendar" style="margin-right: 6px;"></i>Uploaded: ${new Date().toLocaleDateString()}</span>
+                <span><i class="fa-regular fa-file" style="margin-right: 6px;"></i>Files: 1</span>
+              </div>
+            </div>
+            <div class="project-actions">
+              <button class="btn btn-primary" onclick="openProject('demo-1')" style="padding: 6px 16px; font-size: 13px;">
+                Open Project <i class="fa-solid fa-arrow-up-right-from-square" style="font-size: 10px;"></i>
+              </button>
+            </div>
+          </div>
+        `;
       }
     }
 

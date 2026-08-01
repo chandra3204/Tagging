@@ -83,7 +83,17 @@
         }
       } catch (err) {
         console.error('Error during login:', err);
-        showToast('Server connection failed.', 'error');
+        // Fallback for static hosting environments (e.g. GitHub Pages) where Spring Boot backend is not hosted
+        if (email === 'manager@app.com' && password === 'manager123') {
+          showToast('Welcome Back (Demo Mode)', 'success');
+          localStorage.setItem('session_token', 'demo-token-' + Date.now());
+          localStorage.setItem('manager_email', email);
+          setTimeout(() => {
+            window.location.href = 'dashboard.html';
+          }, 1000);
+        } else {
+          showToast('Invalid credentials. Default: manager@app.com / manager123', 'error');
+        }
       }
     });
 
