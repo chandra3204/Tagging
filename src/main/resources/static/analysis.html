@@ -93,13 +93,21 @@
         </div>
         
         <!-- Multi-page controls -->
-        <div class="page-controls" id="page-controls" style="display: none;">
-          <button class="btn btn-secondary" id="prev-page-btn" style="padding: 4px 10px; font-size: 12px;">
+        <div class="page-controls" id="page-controls" style="display: none; align-items: center; gap: 6px;">
+          <button class="btn btn-secondary" id="first-page-btn" style="padding: 4px 8px; font-size: 11px;" title="First Page">
+            <i class="fa-solid fa-angles-left"></i>
+          </button>
+          <button class="btn btn-secondary" id="prev-page-btn" style="padding: 4px 8px; font-size: 11px;" title="Previous Page">
             <i class="fa-solid fa-angle-left"></i>
           </button>
-          <span style="font-size: 13px; font-weight: 500;" id="page-indicator">Page 1 of 1</span>
-          <button class="btn btn-secondary" id="next-page-btn" style="padding: 4px 10px; font-size: 12px;">
+          <span style="font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 4px;" id="page-indicator">
+            Page <input type="number" id="page-jump-input" value="1" min="1" style="width: 50px; text-align: center; background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary); border-radius: 4px; padding: 2px 4px; font-size: 12px; font-weight: 600;"> of <span id="total-pages-span">1</span>
+          </span>
+          <button class="btn btn-secondary" id="next-page-btn" style="padding: 4px 8px; font-size: 11px;" title="Next Page">
             <i class="fa-solid fa-angle-right"></i>
+          </button>
+          <button class="btn btn-secondary" id="last-page-btn" style="padding: 4px 8px; font-size: 11px;" title="Last Page">
+            <i class="fa-solid fa-angles-right"></i>
           </button>
         </div>
       </div>

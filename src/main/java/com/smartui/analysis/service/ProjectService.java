@@ -197,7 +197,24 @@ public class ProjectService {
     }
 
     public List<ProjectFile> getProjectFiles(String projectId) {
-        return projectFileRepository.findByProjectIdAndIsDeleted(projectId, false);
+        List<ProjectFile> files = projectFileRepository.findByProjectIdAndIsDeleted(projectId, false);
+        for (ProjectFile pf : files) {
+            if ("PDF".equalsIgnoreCase(pf.getFileType()) && pf.getPageCount() <= 1) {
+                try {
+                    File f = new File(pf.getFilePath());
+                    if (f.exists()) {
+                        int pc = pdfRenderService.getPdfPageCount(f);
+                        if (pc > 1) {
+                            pf.setPageCount(pc);
+                            projectFileRepository.save(pf);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("Failed to auto-correct PDF page count: " + e.getMessage());
+                }
+            }
+        }
+        return files;
     }
 
     public List<ProjectFile> getDeletedProjectFiles(String projectId) {

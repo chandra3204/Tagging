@@ -260,6 +260,17 @@ async function loadPdfDocument() {
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
   pdfLoadingPromise = pdfjsLib.getDocument(pdfUrl).promise.then(doc => {
     pdfDocument = doc;
+    if (doc && doc.numPages) {
+      if (doc.numPages > totalPages) {
+        totalPages = doc.numPages;
+        if (currentFile) currentFile.pageCount = doc.numPages;
+      }
+      const pageControls = document.getElementById('page-controls');
+      if (pageControls) {
+        pageControls.style.display = totalPages >= 1 ? 'flex' : 'none';
+        updatePageIndicator();
+      }
+    }
     return doc;
   });
 
@@ -769,28 +780,48 @@ function setupCanvasListeners() {
   }
 }
 
-// Attach page control events (prev/next)
+// Attach page control events (first/prev/next/last/jump)
 function setupPageControls() {
+  const firstBtn = document.getElementById('first-page-btn');
   const prevBtn = document.getElementById('prev-page-btn');
   const nextBtn = document.getElementById('next-page-btn');
+  const lastBtn = document.getElementById('last-page-btn');
+  const jumpInput = document.getElementById('page-jump-input');
   const pageControls = document.getElementById('page-controls');
 
+  if (firstBtn) {
+    firstBtn.onclick = (e) => { e.preventDefault(); changePageTo(1); };
+  }
   if (prevBtn) {
-    prevBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      changePage(-1);
-    });
+    prevBtn.onclick = (e) => { e.preventDefault(); changePageTo(currentPage - 1); };
   }
   if (nextBtn) {
-    nextBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      changePage(1);
-    });
+    nextBtn.onclick = (e) => { e.preventDefault(); changePageTo(currentPage + 1); };
+  }
+  if (lastBtn) {
+    lastBtn.onclick = (e) => { e.preventDefault(); changePageTo(totalPages); };
+  }
+  if (jumpInput) {
+    jumpInput.onchange = () => {
+      let val = parseInt(jumpInput.value, 10);
+      if (isNaN(val)) val = 1;
+      val = Math.max(1, Math.min(totalPages, val));
+      changePageTo(val);
+    };
+    jumpInput.onkeyup = (e) => {
+      if (e.key === 'Enter') {
+        let val = parseInt(jumpInput.value, 10);
+        if (isNaN(val)) val = 1;
+        val = Math.max(1, Math.min(totalPages, val));
+        changePageTo(val);
+      }
+    };
   }
 
   // Ensure visibility state is correct
   if (pageControls) {
-    pageControls.style.display = (currentFile && currentFile.fileType === 'PDF' && totalPages > 1) ? 'flex' : 'none';
+    pageControls.style.display = (currentFile && currentFile.fileType === 'PDF') ? 'flex' : 'none';
+    updatePageIndicator();
   }
 }
 
@@ -979,7 +1010,7 @@ function renderProjectFilesList() {
       
       // Update page indicators
       const pageControls = document.getElementById('page-controls');
-      if (file.fileType === 'PDF' && totalPages > 1) {
+      if (file.fileType === 'PDF') {
         pageControls.style.display = 'flex';
         updatePageIndicator();
       } else {
@@ -1314,9 +1345,11 @@ function setupForms() {
 
 // Multi-page PDF paging logic
 function changePage(direction) {
-  const targetPage = currentPage + direction;
-  if (targetPage < 1 || targetPage > totalPages) return;
+  changePageTo(currentPage + direction);
+}
 
+function changePageTo(targetPage) {
+  if (targetPage < 1 || targetPage > totalPages) return;
   currentPage = targetPage;
   updatePageIndicator();
   loadPageAnnotations(currentPage);
@@ -1324,9 +1357,24 @@ function changePage(direction) {
 }
 
 function updatePageIndicator() {
-  document.getElementById('page-indicator').textContent = `Page ${currentPage} of ${totalPages}`;
-  document.getElementById('prev-page-btn').disabled = currentPage === 1;
-  document.getElementById('next-page-btn').disabled = currentPage === totalPages;
+  const jumpInput = document.getElementById('page-jump-input');
+  const totalSpan = document.getElementById('total-pages-span');
+  const firstBtn = document.getElementById('first-page-btn');
+  const prevBtn = document.getElementById('prev-page-btn');
+  const nextBtn = document.getElementById('next-page-btn');
+  const lastBtn = document.getElementById('last-page-btn');
+
+  if (jumpInput) {
+    jumpInput.value = currentPage;
+    jumpInput.max = totalPages;
+  }
+  if (totalSpan) {
+    totalSpan.textContent = totalPages;
+  }
+  if (firstBtn) firstBtn.disabled = currentPage === 1;
+  if (prevBtn) prevBtn.disabled = currentPage === 1;
+  if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+  if (lastBtn) lastBtn.disabled = currentPage >= totalPages;
 }
 
 // PDF Report Trigger
